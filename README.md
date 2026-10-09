@@ -5,7 +5,7 @@
 ## Overview & Architecture
 
 Tamlinux tools are designed to be fast, minimal, and transparent:
-- Built in clean C against the [`libtam`](../libtam) foundation library.
+- Built in clean C against the [`libtam`](https://github.com/greenermoose/libtam) foundation library.
 - Sub-megabyte resident memory (RSS) and instant 0–2 ms cold start.
 - Native compilation against both `glibc` and `musl` on Void Linux, Arch, and antiX.
 - Zero unnecessary runtime bloat or heavy GUI toolkits.
