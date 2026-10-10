@@ -18,7 +18,8 @@ Tamlinux tools are designed to be fast, minimal, and transparent:
 
 ## Building & Installation
 
-`tamlinux-tools` links against an **installed** `libtam` (`/usr/local` by default):
+`tamlinux-tools` links against an **installed** `libtam` under the same
+`PREFIX` (`/usr/local` by default):
 
 ```bash
 # Build all tools
@@ -29,6 +30,13 @@ make test
 
 # Install to system (defaults to /usr/local/bin)
 sudo make install PREFIX=/usr/local
+```
+
+For a development build for your user, install `libtam` under the same
+prefix first; `make uninstall` with the same `PREFIX` removes it again:
+```bash
+make install PREFIX=$HOME/.local/dev
+make uninstall PREFIX=$HOME/.local/dev
 ```
 
 To use a custom `libtam` installation path:
