@@ -10,13 +10,18 @@ fi
 
 echo "Running tamlinux-tools test suite..."
 
-# Test 1: Binary exists and links to libtam
+# Test 1: libtam and its portal are linked in statically; only D-Bus and
+# libc are shared libraries.
 echo "  [TEST] Link verification"
-ldd "$BIN" | grep -q "libtam.so" || {
-    echo "  [FAIL] $BIN does not link to libtam.so" >&2
+if ldd "$BIN" | grep -q "libtam"; then
+    echo "  [FAIL] $BIN loads a shared libtam; it must link libtam statically" >&2
+    exit 1
+fi
+nm "$BIN" | grep -q " T tam_portal_file_choose$" || {
+    echo "  [FAIL] $BIN does not contain libtam-portal" >&2
     exit 1
 }
-echo "  [PASS] Links dynamically against libtam.so"
+echo "  [PASS] Links libtam and libtam-portal statically"
 
 # Test 2: Reject unknown option with exit code 2 and proper error message
 echo "  [TEST] Unknown option rejection (--bogus)"

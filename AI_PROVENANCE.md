@@ -19,6 +19,7 @@ model, Fred's guiding prompts verbatim, the commits, and the decisions.
 | --- | --- | --- | --- |
 | 2026-10-09 | Public repository publication and README `libtam` link fix | opencode 1.18.35; `big-pickle` | [Session record](docs/ai/2026-10-09-publish-repository.md) |
 | 2026-10-19 | Find `libtam` with pkg-config; clear error when missing | Claude Code 2.1.304; `claude-opus-5-5` | [Session record](docs/ai/2026-10-19-libtam-pkg-config.md) |
+| 2026-10-22 | Link `libtam` and its new portal library, `libtam-portal`, statically | Claude Code 2.1.307; `claude-opus-5-5` | [Session record](docs/ai/2026-10-22-libtam-portal-static.md) |
 
 The initial commit `18ef5de` predates this record. It was authored in an
 Antigravity session and carries that session's `AI-Tool` and `AI-Model`

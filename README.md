@@ -14,12 +14,14 @@ Tamlinux tools are designed to be fast, minimal, and transparent:
 
 | Command | Description | Dependencies |
 | :--- | :--- | :--- |
-| **`tam-file-select`** | Fast native file chooser delegating to the desktop XDG Portal | `libtam`, `libdbus-1` |
+| **`tam-file-select`** | Fast native file chooser delegating to the desktop XDG Portal | `libtam-portal` and `libtam` (static), `libdbus-1` |
 
 ## Building & Installation
 
-`tamlinux-tools` links against an **installed** `libtam`, found with
-`pkg-config libtam`. Install `libtam` first; if its prefix is outside
+`tamlinux-tools` links statically against an **installed** `libtam` 0.4.0 or
+later. `tam-file-select` uses its portal library, found with
+`pkg-config libtam-portal`, which adds `libtam` and D-Bus. Install `libtam`
+first; if its prefix is outside
 pkg-config's default path, add it, for example
 `export PKG_CONFIG_PATH="$HOME/.local/dev/lib/pkgconfig"`. If pkg-config cannot
 find it, the build stops and says what to do.
