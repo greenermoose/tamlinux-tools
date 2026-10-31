@@ -9,4 +9,6 @@ records carry no session identifiers or transcript paths.
 
 | Date | Topic | Primary tool | Model | Session document |
 | :-- | :-- | :-- | :-- | :-- |
+| 2026-10-22 | Static `libtam` / `libtam-portal` link | — | — | [`2026-10-22-libtam-portal-static.md`](2026-10-22-libtam-portal-static.md) |
+| 2026-10-19 | `libtam` pkg-config discovery | — | — | [`2026-10-19-libtam-pkg-config.md`](2026-10-19-libtam-pkg-config.md) |
 | 2026-10-09 | Public repository publication and libtam README link fix | opencode `1.18.35` | `big-pickle` | [`2026-10-09-publish-repository.md`](2026-10-09-publish-repository.md) |
