@@ -1,13 +1,42 @@
 # tamlinux-tools
 
-Native Tamlinux command-line utilities that consume
-[`libtam`](https://github.com/greenermoose/libtam).
+Standalone Tamlinux command-line utilities written in pure C against
+[`libtam`](https://github.com/greenermoose/libtam). Each tool is a small
+program with its own component version, delivered through
+[`tamlinux-packages`](https://github.com/greenermoose/tamlinux-packages)
+assemblies, and usable from scripts without the Tamlinux desktop shell.
+
+## What belongs here
+
+A tool belongs in this repository when it is:
+
+- Implemented in pure C and linked against `libtam` (and `libtam-portal` only
+  when the tool needs the desktop portal)
+- Small and reusable from other programs or shell scripts
+- Independent of the Tamlinux Quickshell shell, compositor adapters, and
+  product menus
+- Versioned with this component, not with the Tamlinux product number
+
+Bash or Python scripts are not added here. Rewrite them in C with `libtam`
+first if they should become tools in this suite.
+
+## What belongs elsewhere
+
+| Need | Repository |
+| :--- | :--- |
+| Workstation / product `tam-*` commands (menus, theme, deploy, compositor helpers, lifecycle tools) | [`tamlinux`](https://github.com/greenermoose/tamlinux) under `commands/` |
+| Offline knowledge browser and guide pager | [`tam`](https://github.com/greenermoose/tam) |
+| Shared C foundation library | [`libtam`](https://github.com/greenermoose/libtam) |
+| Package recipes and assembly pins | [`tamlinux-packages`](https://github.com/greenermoose/tamlinux-packages) |
 
 ## Tools
 
 | Command | Description | Dependencies |
 | :--- | :--- | :--- |
 | **`tam-file-select`** | File chooser via the desktop XDG Portal | Static `libtam-portal` / `libtam`; shared `libdbus-1` at runtime |
+
+Assemblies install `tam-file-select` on `PATH`. Product flows that call it
+include share (`tam-menu-share`) and theme branding image pick.
 
 ## Usage: `tam-file-select`
 
