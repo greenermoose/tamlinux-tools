@@ -170,8 +170,8 @@ secret in it):
 
 - `bundles/<bundle id>.tbundle` — product bundle files, the portable form;
 - `record` — every placed file: path, hash, bundle id;
-- `pending` — the armed switch, present between prepare and apply;
-- `apply` — the apply journal, present only while an apply runs;
+- `transaction` — the system record of the switch in progress, if any
+  (see "The transaction");
 - `host-id` — the machine's identity, so a renamed or reinstalled host is
   still recognized. It is derived from the board's DMI UUID
   (`/sys/class/dmi/id/product_uuid`, readable only by root, so the system
@@ -190,8 +190,8 @@ folded into this one.
 
 - `captures/<capture id>/` — settings captures, readable only by that
   user;
-- `staging/`, `pending`, `apply` — the user's half of a switch (see
-  "Apply"), on the home filesystem so renames into home stay atomic;
+- `staging/`, `transaction` — the user's half of a switch (see "The
+  transaction"), on the home filesystem so renames into home stay atomic;
 - `settings.list` — paths the user added to the settings list.
 
 **Build cache, `$XDG_CACHE_HOME/tamlinux/tam-bundle/`:** unchanged from the
@@ -431,6 +431,29 @@ graphical session is running. Each half has a system part (root) and a
 settings part (the user). Nothing here depends on the init system except
 the boot trigger, which the tam nut supplies.
 
+### The transaction
+
+A switch is one transaction with one id, recorded twice: the system part in
+`/var/lib/tamlinux/transaction`, the user's part in
+`~/.local/state/tamlinux/transaction`. Both carry the same id, the old and
+new product ids, the capture id, the user and the kind of switch (upgrade,
+restore, product only, settings only). Each moves through five states, in
+order, written atomically and synced:
+
+| State | Meaning | After an interruption |
+| --- | --- | --- |
+| **staging** | prepare is copying and checking | never applied; the next prepare cleans up and starts again |
+| **ready** | everything staged and synced; written last | the next `start` or boot applies it |
+| **applying** | renames in progress | recovery goes forward |
+| **activating** | files in place; required post-install steps running, each marked done | the remaining steps run again; each is safe to run twice |
+| **complete** | everything required succeeded | the record moves to the log |
+
+Only **ready** can be applied, and a record stays until **complete**, so
+neither a half-prepared switch nor a half-activated one can pass for
+finished. The first version supports one active Tamlinux user per machine;
+the product is shared, and a second user's settings part is not defined
+yet.
+
 ### Prepare (`tam-bundle install <bundle>`, `back`, `restore`)
 
 1. **Check.** Verify the bundle. Run the dependency check; refuse with the
@@ -450,14 +473,17 @@ the boot trigger, which the tam nut supplies.
 5. **Stage, system part (root, through `pkexec`).** Unpack the product
    tree into `version/<id>/` (on Btrfs, clone unchanged files from the
    current version), copy placed files into `staging/<id>/`, hash every
-   copy, then `syncfs` once. Write `pending` (from, to, the list of placed
-   changes) atomically and sync. The old version stays unpacked and whole.
+   copy, then `syncfs` once. The system record says **staging** throughout.
+   The old version stays unpacked and whole.
 6. **Stage, settings part (the user).** First capture the current settings
    automatically (so nothing is lost and the switch can be undone by
    rolling forward again). Then copy the files that will apply into
-   `~/.local/state/tamlinux/staging/`, sync, and write the user's
-   `pending`.
-7. **Tell the user**, warmly:
+   `~/.local/state/tamlinux/staging/`, sync, and write the user's record
+   in **staging**.
+7. **Publish.** Only when both parts are staged and synced, write both
+   records as **ready** (the user's first, then the system's), each
+   atomically and synced. Nothing in **staging** is ever applied.
+8. **Tell the user**, warmly:
 
    ```text
    Tamlinux 0.7.0 is ready.
@@ -470,8 +496,10 @@ the boot trigger, which the tam nut supplies.
    Where the desktop starts some other way (a login screen), the message
    says to log out and back in instead.
 
-Preparing again replaces an earlier pending switch. `tam-bundle cancel`
-removes it; nothing live has changed.
+Preparing again replaces an earlier switch that is still in **staging**
+or **ready**, with a new transaction id. `tam-bundle cancel` removes one
+in those states; nothing live has changed. Once a switch is **applying**,
+it can only finish forward.
 
 ### Apply (when the desktop next starts, or at boot)
 
@@ -483,7 +511,9 @@ The text-only tier never runs `tam-desktop`, and a user may type
 `tam-desktop` directly, so both `tam-start` and `tam-desktop` begin with
 the trigger, one call to `tam-bundle apply --if-pending`:
 
-1. Nothing pending and no journal: go straight on (a stat or two).
+1. No transaction record: go straight on (a stat or two). A record in
+   **staging** is left alone and reported: an unfinished prepare, never
+   applied.
 2. **Clear the old version.** Stop the old version's own user services and
    timers, using the rootstock profile's step (on systemd, `systemctl
    --user stop` of the Tamlinux units). They are Tamlinux's and only
@@ -532,7 +562,8 @@ Both run the same `tam-bundle apply`. Neither is a bundle file.
 
 **System part, `tam-bundle apply` (root).** Steps, under the lock:
 
-1. Nothing pending and no journal: exit at once (a stat or two).
+1. No record, or a record in **staging**: exit at once (a stat or two).
+   A **complete** record is moved to the log.
 2. **Busy check.** If any graphical Tamlinux session is running, or any
    process still uses an old file, leave the switch armed, say which, and
    exit; the calling command then runs the old version as it is, and
@@ -545,7 +576,7 @@ Both run the same `tam-bundle apply`. Neither is a bundle file.
    example, runs as `python3 /usr/lib/tamlinux/current/share/...`. The
    user-side trigger runs the same check first, so a yes can come before
    this one refuses.
-3. Write the journal `apply` (copied from `pending`) and sync.
+3. Set the system record to **applying** and sync.
 4. For each placed change: rename the staged file over the destination
    (`rename(2)` replaces it in one atomic step, so the path always shows a
    whole old or a whole new file). The old version's `.placed/` already
@@ -557,31 +588,45 @@ Both run the same `tam-bundle apply`. Neither is a bundle file.
 5. Replace `current` with a new link (`symlink` beside it, then `rename`
    over it) and `fsync` `/usr/lib/tamlinux`.
 6. Update `record`, `keep` (the old id becomes "previous"), `stat`, `log`;
-   `syncfs`; remove `apply` and `pending`.
-7. Run the system post-install steps the rootstock profile defines and log
-   each. On systemd these are `system-daemon-reload`, `man-index`,
-   `sysctl-apply` and `tmpfiles-create`; a runit profile has its own. A
+   set the system record to **activating**; `syncfs`.
+7. Run the system post-install steps the rootstock profile defines, marking
+   each done in the record as it succeeds. On systemd these are
+   `system-daemon-reload`, `sysctl-apply` and `tmpfiles-create`
+   (required) and `man-index` (optional); a runit profile has its own. A
    bundle names steps by these names and a step the profile lacks is
-   reported, not guessed. Settings that only take effect at boot (logind,
-   the system manager) are named in the message.
+   reported, not guessed. Every step is safe to run twice.
+8. When every required step has succeeded, set the system record to
+   **complete**. A failed required step leaves it **activating** and is
+   retried by the next apply. A failed optional step is logged and retried
+   by `tam-bundle after`; it never blocks. Settings that only take effect
+   at boot (logind, the system manager) are named in the message.
 
 **Settings part, `tam-bundle apply-settings` (the user).** Run by the
 session entry right after the system part, before the compositor; it never
-needs root, because captures hold only home files. It only
-proceeds when the system part has finished for the product version the
-staged settings belong to; the same journal pattern: write the journal,
-rename each staged file into place, sync, remove the journal. It never
-runs as root and never follows links out of the home directory.
+needs root, because captures hold only home files. It only proceeds when
+the system record is **complete** for the same transaction id. It takes
+the user's record through the same states: **applying** while it renames
+each staged file into place and syncs, **activating** while the user
+post-install steps run (`user-units-reload` is required), then
+**complete**. It never runs as root and never follows links out of the
+home directory.
 
 **Interruption.** Apply only moves files that prepare already wrote and
 synced, so recovery always goes forward: rerunning apply reads the
-journal, and for each step checks whether it is already done (the
+record, and for each step checks whether it is already done (the
 destination already has the new hash) or still to do (the staged file is
 still there). The boot trigger and the session commands both rerun it
 before any session starts. An apply that finds a state it did not produce
 (a destination with neither hash) stops, changes nothing more, and says
 what it found; `tam-desktop` then refuses to start the graphical session
 and says how to recover from a text console.
+
+**Agreement, not absence.** `tam-desktop` starts the new version only when
+there is no record, or when the system record and the user's record carry
+the same transaction id and both say **complete**. Any other combination
+(one side **complete** and the other not, different ids, a record stuck in
+**activating**) blocks the desktop with a message saying how to finish or
+roll back from the text console, which always remains usable.
 
 **What the user sees.** When the desktop starts after a pending switch:
 
@@ -677,10 +722,10 @@ installed. Three layers keep it so:
 | `tam-bundle capture [-o <file>]` | Capture the user's settings; with `-o`, write a workstation bundle | No |
 | `tam-bundle install <bundle>` | Prepare a product or workstation bundle | Prepare's system part |
 | `tam-bundle back`, `restore <bundle>` | Prepare the previous or a named bundle, with `--product-only` or `--settings-only` | Prepare's system part |
-| `tam-bundle cancel` | Drop a pending switch | System part |
+| `tam-bundle cancel` | Drop a switch in staging or ready | System part |
 | `tam-bundle apply` | System part of a pending switch; run by the session entry and the boot trigger | Yes |
 | `tam-bundle apply-settings` | Settings part; run by the session entry | No |
-| `tam-bundle status` | Current, previous, pending, interrupted, space used | No |
+| `tam-bundle status` | Current, previous, the transaction and its state, space used | No |
 | `tam-bundle check [--full]`, `where <path>` | Edited, missing or extra files; owner of one file | No |
 | `tam-bundle keep`, `unkeep`, `prune [--yes]` | Protect, list and remove retained bundles | Yes |
 | `tam-bundle settings diff <path>` | Show a settings file beside its old and new defaults | No |
