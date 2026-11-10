@@ -29,9 +29,10 @@ are activated together. With it the developer can:
 - never be left with a half-installed system in use.
 
 Tamlinux is system software, so it installs the way system software has on
-Linux for decades: commands in `/usr/bin`, private files under
-`/usr/lib/tamlinux`, shared data in its usual `/usr/share` places, and
-nothing in `/usr/local`, which belongs to the machine's administrator.
+Linux for decades: commands in `/usr/bin`, private files (ones only
+Tamlinux programs use) under `/usr/lib/tamlinux`, shared data in its usual
+`/usr/share` places, and nothing in `/usr/local`, which belongs to the
+machine's administrator.
 
 It replaces Nix and Home Manager for Tamlinux, without their store, symlink
 chains, daemon or language.
