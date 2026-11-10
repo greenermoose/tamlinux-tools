@@ -7,8 +7,9 @@
   privilege through `pkexec` and the polkit action, and 0.3.1 records the
   user's session-step results; 0.4.0 builds the manual index into the
   bundle (`index man`). The manual page `man/tam-bundle.1` is installed
-  with it and checked against `--help` by `make test`. Still to come: the
-  `tam` pages and the native adapter package.
+  with it and checked against `--help` by `make test`, and the `tam` corpus
+  has a page. 0.4.1 makes every changing command recover first (see
+  "Interruption recovery"). Still to come: the native adapter package.
 - **Component:** `tamlinux-tools`, its own version number, C on `libtam`,
   linked statically.
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
@@ -341,8 +342,9 @@ fixed rather than excused.
 | `tam-bundle after` | Run the live bundle's post-install steps as the invoking user | No |
 
 Every changing command takes `--slot <dir>` (default `/usr/lib/tamlinux`)
-and `--dry-run`. Every command runs `recover`'s check first and stops if a
-previous switch was interrupted and cannot be finished automatically.
+and `--dry-run`. Every changing command recovers an interrupted switch first,
+and stops if it cannot be finished or undone automatically (see
+"Interruption recovery").
 
 **Privilege.** Run as a user, `switch`, `back`, `keep`, `prune` and
 `recover` re-run their privileged part through `pkexec tam-bundle ...`
@@ -446,7 +448,8 @@ while running old code. The `shell-restart` step exists for that, and
 ## Interruption recovery
 
 The intent file and the identity file inside the live tree decide every
-case. At the start of every command:
+case. At the start of every changing command (`switch`, `back`, `recover`,
+`keep`, `unkeep`, `prune`), under the slot's lock:
 
 | Found | Meaning | Action |
 | --- | --- | --- |
@@ -455,6 +458,26 @@ case. At the start of every command:
 | `switch` present, `current/BUNDLE` is `from` | Stopped before the exchange | Remove staging, remove `switch`, log "undone"; the old tree is live and untouched |
 | `switch` present, `current/BUNDLE` is `to` | Stopped after the exchange | Do steps 6 and 7, log "finished", then report that post-install steps did not run and run them |
 | `switch` present, `current/BUNDLE` is neither | Not produced by this program | Stop, change nothing, print what was found |
+
+The exchange keeps the live tree whole, but until recovery the bookkeeping
+around it is not: after an interrupted `back`, the tree that was live sits
+in `kept/` under the target's name, and the keep list still names the old
+"previous". A command that acted on kept trees or the keep list before
+recovering could delete the wrong tree (found 2026-11-09: `prune` removed
+the tree that had been live, and rollback to it then failed). So:
+
+- **Changing commands recover first.** A dry run changes nothing: it says
+  what recovery would do and exits with status 4.
+- **Reading commands that use only the live tree** (`check`, `where`,
+  `after`) answer from it, since it is always one whole bundle, and print a
+  warning naming the interrupted switch. A user often cannot recover a
+  root-owned slot, and the answer is correct.
+- **`status`** reports the interrupted switch and exits with status 4.
+
+This follows the rule of journaling systems: SQLite rolls back a hot
+journal before it reads the database, and ext4 replays its journal at
+mount before anything uses the filesystem. Here only the bookkeeping can
+be inconsistent, so only the commands that use it must wait for recovery.
 
 Removal of staging or kept trees uses directory descriptors (`openat`,
 `unlinkat`), never follows symbolic links and never crosses to another

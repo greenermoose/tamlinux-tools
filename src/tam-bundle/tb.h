@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-#define TB_VERSION "0.4.0"
+#define TB_VERSION "0.4.1"
 #define TB_FORMAT 1               /* newest record format this program reads */
 #define TB_DEFAULT_SLOT "/usr/lib/tamlinux"
 #define TB_SYSTEM_STATE "/var/lib/tam-bundle"
@@ -183,6 +183,9 @@ int  tb_back(tb_slot_t *s, const char *id, const tb_switch_opts_t *o);
 /* Finish or undo an interrupted switch. Returns TB_OK when the slot is clean
  * afterwards; sets *ran_after_due when post-install steps are still due. */
 int  tb_recover(tb_slot_t *s, bool dry_run, bool *steps_due);
+/* Recover before changing the slot; a dry run only reports. TB_OK when the
+ * slot is clean (or a recovered switch's post-install step failed). */
+int  tb_recover_first(tb_slot_t *s, bool dry_run);
 
 /* ---- Steps and needs (after.c) ----------------------------------------- */
 

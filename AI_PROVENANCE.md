@@ -28,6 +28,7 @@ model, Fred's guiding prompts verbatim, the commits, and the decisions.
 | 2026-11-09 | `tam-bundle` 0.3.0 and 0.3.1: privilege through `pkexec` | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-pkexec.md) |
 | 2026-11-09 | `tam-bundle` 0.4.0: the manual index, built into the bundle | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-man-index.md) |
 | 2026-11-09 | `tam-bundle`: the manual page | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-man-page.md) |
+| 2026-11-09 | `tam-bundle` 0.4.1: every changing command recovers first | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-recover-first.md) |
 
 The initial commit `18ef5de` predates this record. It was authored in an
 Antigravity session and carries that session's `AI-Tool` and `AI-Model`

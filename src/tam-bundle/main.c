@@ -102,6 +102,20 @@ static int cmd_lock(const opts_t *o) {
     return tb_lock_set(o->args[1], o->args[2], &lo);
 }
 
+/* ---- Interrupted switches --------------------------------------------- */
+
+/* check, where and after read only the live tree, which an exchange keeps
+ * whole, so they answer; but they say that a switch was interrupted. */
+static void warn_interrupted(const tb_slot_t *s) {
+    tb_intent_t it;
+    int have = tb_intent_read(s, &it);
+    if (have > 0)
+        tb_err("warning: a %s to %s from %s was interrupted; this answer is from the live tree. "
+               "Run `tam-bundle recover` to finish or undo it.", it.op, it.to, it.from);
+    else if (have < 0)
+        tb_err("warning: the switch intent in %s cannot be read; run `tam-bundle status`", s->state);
+}
+
 /* ---- verify, needs, check ---------------------------------------------- */
 
 static int cmd_verify(const opts_t *o) {
@@ -133,6 +147,7 @@ static int cmd_needs(const opts_t *o) {
 }
 
 static int cmd_check(tb_slot_t *s, const opts_t *o) {
+    warn_interrupted(s);
     char cur[256];
     if (tb_current_id(s, cur) != 0) return TB_FAIL;
     if (strcmp(cur, "-") == 0) {
@@ -252,6 +267,7 @@ static int cmd_status(tb_slot_t *s) {
 
 static int cmd_where(tb_slot_t *s, const opts_t *o) {
     if (o->nargs != 2) return usage("where needs a path");
+    warn_interrupted(s);
     const char *path = o->args[1];
     char *live = tam_path_join(s->dir, "current");
     size_t llen = strlen(live);
@@ -293,6 +309,8 @@ static int cmd_keep(tb_slot_t *s, const opts_t *o, bool keep) {
     const char *id = o->args[1];
     if (keep && strcmp(o->args[2], "previous") == 0) return usage("\"previous\" is set by switch and back");
     if (tb_slot_lock(s) != 0) return TB_FAIL;
+    int rr = tb_recover_first(s, o->sw.dry_run);
+    if (rr != TB_OK) return rr;
     if (keep && !kept_exists(s, id)) {
         tb_err("%s is not kept in %s/kept", id, s->dir);
         return TB_FAIL;
@@ -311,6 +329,8 @@ static int cmd_keep(tb_slot_t *s, const opts_t *o, bool keep) {
 
 static int cmd_prune(tb_slot_t *s, const opts_t *o) {
     if (tb_slot_lock(s) != 0) return TB_FAIL;
+    int rr = tb_recover_first(s, o->sw.dry_run);
+    if (rr != TB_OK) return rr;
     tb_keep_t k;
     if (tb_keep_read(s, &k) != 0) return TB_FAIL;
     size_t n;
@@ -353,6 +373,7 @@ static int cmd_prune(tb_slot_t *s, const opts_t *o) {
 }
 
 static int cmd_after(tb_slot_t *s) {
+    warn_interrupted(s);
     char cur[256];
     if (tb_current_id(s, cur) != 0) return TB_FAIL;
     if (strcmp(cur, "-") == 0) {

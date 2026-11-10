@@ -244,6 +244,44 @@ done
 [ $crash_ok = $crash_n ] && pass "recovered from all $crash_n fault points to exactly one whole bundle" \
     || fail "fault points: $crash_ok of $crash_n recovered"
 
+# ---- Recover first ---------------------------------------------------------
+
+# After an interrupted back, the tree that was live sits in kept/ under the
+# target's name. prune must recover first, or it deletes that tree.
+fresh_slot; tb switch "$BASE/A"; tb switch "$BASE/B"; tb switch "$BASE/C"
+TAM_BUNDLE_FAULT=after-exchange tb back "$A" >/dev/null 2>&1
+expect 0 "prune after an interrupted back recovers first" tb prune --yes
+if [ "$(live_id)" = "$A" ] && [ -d "$SLOT/kept/$C" ] && no_leftovers && tb back >/dev/null 2>&1 && \
+   [ "$(live_id)" = "$C" ]; then pass "the tree that was live survived prune, and back returns to it"
+else fail "prune after an interrupted back lost the tree that was live"; tbv status >&2; fi
+
+# A dry run changes nothing, even with a switch to recover.
+fresh_slot; tb switch "$BASE/A"
+TAM_BUNDLE_FAULT=after-exchange tb switch "$BASE/B" >/dev/null 2>&1
+expect 4 "a dry-run prune stops at an interrupted switch" tb --dry-run prune
+expect 4 "a dry-run switch stops at an interrupted switch" tb --dry-run switch "$BASE/C"
+expect 4 "a dry-run back stops at an interrupted switch" tb --dry-run back
+expect 4 "a dry-run keep stops at an interrupted switch" tb --dry-run keep "$A" anchor
+[ -e "$STATE/switch" ] && [ "$(live_id)" = "$B" ] && pass "dry runs left the interrupted switch as it was" \
+    || fail "a dry run changed the slot"
+
+# Reading commands answer from the live tree and warn.
+for c in check "where $SLOT/current/bin/tool" after; do
+    # shellcheck disable=SC2086
+    "$BIN" --slot "$SLOT" --state "$STATE" $c >"$BASE/out" 2>&1; rc=$?
+    if [ $rc = 0 ] && grep -q "was interrupted" "$BASE/out"; then pass "${c%% *} answers and warns of an interrupted switch"
+    else fail "${c%% *} during an interrupted switch (exit $rc)"; sed 's/^/        /' "$BASE/out" >&2; fi
+done
+
+expect 0 "keep recovers an interrupted switch first" tb keep "$A" anchor
+[ -d "$SLOT/kept/$A" ] && no_leftovers && grep -qE "^keep[[:space:]]+$A[[:space:]]+anchor" "$STATE/keep" 2>/dev/null \
+    && pass "keep protected the tree recovery moved to kept/" || { fail "keep after recovery"; cat "$STATE/keep" >&2; }
+
+fresh_slot; tb switch "$BASE/A"
+TAM_BUNDLE_FAULT=after-exchange tb switch "$BASE/B" >/dev/null 2>&1
+expect 0 "unkeep recovers an interrupted switch first" tb unkeep "$A"
+no_leftovers && [ -d "$SLOT/kept/$A" ] && pass "unkeep left a clean slot" || fail "unkeep after recovery"
+
 # Kill at random moments: staging is slowed so kills land inside it as well.
 fresh_slot; tb switch "$BASE/A"
 rounds=${TAM_BUNDLE_KILL_ROUNDS:-30}; killed=0; kill_ok=0

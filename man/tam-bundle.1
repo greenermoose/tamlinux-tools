@@ -252,10 +252,15 @@ Name the bundle, version and recorded hash of one file in the live tree.
 is the file's full path, beginning with
 .IB slot /current/\fR.
 .SS Changing the slot
-These commands take the slot's lock.
+These commands take the slot's lock, then finish or undo an interrupted
+switch first, as
+.B recover
+does, because an interrupted switch can leave kept trees misnamed and the
+keep list stale.
 With
 .BR \-\-dry\-run ,
-they say what they would change and change nothing.
+they say what they would change and change nothing; if a switch was
+interrupted, they say what recovery would do and exit with status 4.
 .TP
 .BI switch " bundle"
 Install the bundle directory
@@ -297,12 +302,15 @@ A staging tree that never went live is removed.
 If the live tree is neither side of the recorded switch,
 .B recover
 changes nothing, prints what it found and exits with status 4.
-.B switch
-and
-.B back
-recover the same way before they start;
+The other changing commands recover the same way before they start.
 .B status
 reports an interrupted switch and exits with status 4.
+.BR check ,
+.B where
+and
+.B after
+read only the live tree, which the exchange keeps whole, so they still
+answer, with a warning that names the interrupted switch.
 .TP
 .BI keep " bundle-id reason"
 Protect a kept tree from

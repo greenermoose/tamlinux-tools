@@ -374,11 +374,28 @@ static int exchange_into_current(tb_slot_t *s, const tb_intent_t *it) {
     return 0;
 }
 
-static int prepare(tb_slot_t *s, char cur[256]) {
-    if (tb_slot_lock(s) != 0) return TB_FAIL;
+/* Every command that changes the slot runs this under the lock first: an
+ * interrupted switch can leave kept trees misnamed and the keep list stale
+ * (after an interrupted back, the tree that was live sits under the
+ * target's name in kept/), so nothing acts on them until it is recovered.
+ * A dry run changes nothing: it says what recovery would do and stops. */
+int tb_recover_first(tb_slot_t *s, bool dry_run) {
+    if (dry_run) {
+        tb_intent_t it;
+        int have = tb_intent_read(s, &it);
+        if (have == 0) return TB_OK;
+        if (have > 0) tb_recover(s, true, NULL);
+        tb_err("an interrupted switch must be recovered first; run `tam-bundle recover`");
+        return TB_INTERRUPTED;
+    }
     int r = tb_recover(s, false, NULL);
-    if (r == TB_INTERRUPTED) return r;
-    if (r != TB_OK && r != TB_AFTER_FAILED) return r;
+    return r == TB_AFTER_FAILED ? TB_OK : r;
+}
+
+static int prepare(tb_slot_t *s, char cur[256], bool dry_run) {
+    if (tb_slot_lock(s) != 0) return TB_FAIL;
+    int r = tb_recover_first(s, dry_run);
+    if (r != TB_OK) return r;
     if (same_device(s, "current") != 0 || same_device(s, "kept") != 0) return TB_FAIL;
     if (tb_current_id(s, cur) != 0) return TB_FAIL;
     return TB_OK;
@@ -407,7 +424,7 @@ static int do_back(tb_slot_t *s, const char *cur, const char *target, const tb_s
 int tb_switch(tb_slot_t *s, const char *bundle_dir, const tb_switch_opts_t *o) {
     double started = now_s();
     char cur[256];
-    int r = prepare(s, cur);
+    int r = prepare(s, cur, o->dry_run);
     if (r != TB_OK) return r;
 
     tb_bundle_t b;
@@ -543,7 +560,7 @@ out:
 int tb_back(tb_slot_t *s, const char *id, const tb_switch_opts_t *o) {
     double started = now_s();
     char cur[256];
-    int r = prepare(s, cur);
+    int r = prepare(s, cur, o->dry_run);
     if (r != TB_OK) return r;
     tb_keep_t k;
     if (tb_keep_read(s, &k) != 0) return TB_FAIL;
