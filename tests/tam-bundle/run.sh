@@ -114,6 +114,7 @@ mkdir -p "$SLOT/kept"
 expect 0 "dry-run plans the first switch before state exists" tb --dry-run switch "$BASE/A"
 [ ! -e "$STATE" ] && pass "planning an empty slot creates no state" || fail "empty-slot plan wrote state"
 expect 0 "first switch into an empty slot" tb switch "$BASE/A"
+[ "$(stat -c %a "$STATE/lock")" = 644 ] && pass "the state lock is readable by users planning a root-owned slot" || fail "private state lock"
 chmod 444 "$STATE/lock"
 expect 0 "dry-run can read a lock it cannot write" tb --dry-run switch "$BASE/B"
 expect 0 "dry-run recovery can read a lock it cannot write" tb --dry-run recover

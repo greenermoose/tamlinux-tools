@@ -25,6 +25,10 @@
   read-only lock when present and never create state. A first switch can be
   planned before either the slot or its state exists. Native bring-up
   exposed the missing-state case; new tests cover it and a read-only lock.
+- 0.5.2 makes changing commands set the state lock to 0644, matching the
+  public-state contract. The real root-owned slot exposed libtam's private
+  0600 default; the next privileged change repairs old locks too. The test
+  suite now checks the default mode before testing read-only planning.
 
 ## Verification
 

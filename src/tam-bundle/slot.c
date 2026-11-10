@@ -131,6 +131,13 @@ int tb_slot_lock(tb_slot_t *s) {
             tb_err("cannot lock slot %s: %s", s->dir, strerror(saved));
         return -1;
     }
+    /* libtam creates locks privately by default. Slot state is public,
+     * including the lock used by an unprivileged read-only plan. This also
+     * repairs older 0600 locks on the next privileged changing command. */
+    if (fchmod(s->lock_fd, 0644) != 0) {
+        tb_err("cannot make the slot lock readable: %s", strerror(errno));
+        return -1;
+    }
     return 0;
 }
 
