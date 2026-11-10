@@ -109,8 +109,9 @@ keeps those, including everything a capture leaves out).
   Tamlinux").
 - **Rootstock profile:** the part of the tam nut that says how this
   rootstock works: which package manager answers ownership questions, which
-  folders files may be placed in, which of them affect login and boot, and
-  which post-install steps exist.
+  folders files may be placed in, which of them affect login and boot,
+  which post-install steps exist, and how to stop and restart a version's
+  user services.
 - **Workstation bundle:** a product bundle plus a settings capture; what
   "bundle this up" produces and what is carried to another workstation.
 - **Product tree:** the part of a product bundle installed under
@@ -476,16 +477,38 @@ The text-only tier never runs `tam-desktop`, and a user may type
 the trigger, one call to `tam-bundle apply --if-pending`:
 
 1. Nothing pending and no journal: go straight on (a stat or two).
-2. Otherwise run `pkexec tam-bundle apply` (the system part). A polkit rule
+2. **Clear the old version.** Stop the old version's own user services and
+   timers, using the rootstock profile's step (on systemd, `systemctl
+   --user stop` of the Tamlinux units). They are Tamlinux's and only
+   waiting for their next run, so stopping them loses nothing. The desktop
+   services are normally down already, because `tam-desktop` stops the
+   graphical session target when the compositor exits; this step verifies
+   that rather than assuming it. Then look for the user's own processes
+   still using old files (see the busy check). Wait up to five seconds for
+   them to finish; if some remain, name them and ask:
+
+   ```text
+   Two programs are still using the old Tamlinux:
+     tmux (tty3): tam-watch
+     bash (tty4): tam log
+   Stop them and continue? [y/N]
+   ```
+
+   tam-bundle never stops the user's own processes without that yes. On
+   no (the default), the command goes on with the old version as it is,
+   the switch stays armed, and it is offered again next time.
+3. Run `pkexec tam-bundle apply` (the system part). A polkit rule
    from the tam nut allows that one action, `org.tamlinux.bundle.apply`,
    without a password for a user in an active local session. It grants
    nothing new: apply only finishes what an authorized prepare already
    staged and armed.
-3. Run `tam-bundle apply-settings` as the user (the settings part).
-4. If the switch replaced the running command's own file, re-execute the
+4. Run `tam-bundle apply-settings` as the user (the settings part), then
+   start the stopped timers and services again from the new version (the
+   `user-units-reload` step).
+5. If the switch replaced the running command's own file, re-execute the
    new one, so an old `tam-start` or `tam-desktop` never runs the new
    version.
-5. Go on: show the menu, or start the compositor.
+6. Go on: show the menu, or start the compositor.
 
 Leaving the desktop returns to the text-console shell, so a switch needs no
 logout from the console, only `start` again.
@@ -504,9 +527,17 @@ Both run the same `tam-bundle apply`. Neither is a bundle file.
 
 1. Nothing pending and no journal: exit at once (a stat or two).
 2. **Busy check.** If any graphical Tamlinux session is running, or any
-   process still runs a program from the old version's tree (`/proc/<pid>/
-   exe` and `maps`), leave the switch armed, say which, and exit. The
-   session entry then starts the old version as it is; nothing is mixed.
+   process still uses an old file, leave the switch armed, say which, and
+   exit; the calling command then runs the old version as it is, and
+   nothing is mixed. "Uses an old file" means a path in the old version's
+   tree or an old placed file (such as `/usr/bin/tam-*`) appears in the
+   process's program (`/proc/<pid>/exe`), mapped files (`maps`), command
+   line, open files (`fd`) or working directory. Interpreted programs show
+   only their interpreter as the program (`python3`, `quickshell`), so the
+   command line and open files are what catch them; the shell service, for
+   example, runs as `python3 /usr/lib/tamlinux/current/share/...`. The
+   user-side trigger runs the same check first, so a yes can come before
+   this one refuses.
 3. Write the journal `apply` (copied from `pending`) and sync.
 4. For each placed change: move the old file into the old version's
    `.placed/`, rename the staged file into place (`rename(2)`, atomic per
@@ -794,8 +825,12 @@ static against musl, or static glibc with no NSS lookups.
 7. **Login:** `start` and `tam-desktop` with nothing pending add no
    measurable delay; with a pending switch they apply, re-execute
    themselves when the switch replaced them, then run the new version;
-   with a busy old process they run the old version and leave the switch
-   armed. `hi` and `start` work before the cultivar is installed.
+   Tamlinux timers and services are stopped and restarted from the new
+   version; a user process using old files is named, and on no they run
+   the old version and leave the switch armed, on yes it is stopped and
+   the switch goes ahead; an interpreted old program (a Python script
+   from the old tree) is caught. `hi` and `start` work before the
+   cultivar is installed.
 
 ## Migration order
 
@@ -824,14 +859,8 @@ proofs pass.
 - **The polkit rule for `org.tamlinux.bundle.apply`:** confirm on Arch
   that a text-console login counts as an active local session and that
   the rule allows exactly that action without a password.
-- **Busy check limits:** which long-lived processes (terminal
-  multiplexers, agents left running on a text console) hold old files, and
-  whether apply should wait briefly before leaving the switch armed. While
-  any session stays open, the user's service manager keeps running, so
-  user services started from the old tree may still be up when `start` is
-  typed again; the check must say which of them matter, and it must also
-  catch processes running old `/usr/bin/tam-*` files, not only programs in
-  the old version's tree.
+- **`tam-desktop` stops the graphical session target on exit:** confirm it
+  does today; if not, that is a small product fix before the login proof.
 - **Apply's double rename:** step 4 moves the old file into `.placed/` and
   then renames the new one in, but `.placed/` already has the old copy
   from that version's prepare. Proposed: one rename of the staged file
