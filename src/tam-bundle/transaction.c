@@ -246,6 +246,8 @@ static int profileline(void *u,size_t l,int fmt,char **f,size_t n) {
     c->required[k]=!strcmp(f[2],"required");
     return 0;
     }
+    if(n==4 && !strcmp(f[0],"user-step") && tb_valid_name(f[1]) &&
+       (!strcmp(f[2],"required") || !strcmp(f[2],"optional")) && tam_path_is_safe_rel(f[3]))return 0;
     return 1;
 }
 static int profile(context *c) {
@@ -562,6 +564,7 @@ static int prepare(context *c,const char *source) {
     for(size_t i=0;i<sizeof random;i++)snprintf(c->tx.id+i*2,3,"%02x",random[i]);
     if(strcmp(c->tx.from,"-") && load(c,c->tx.from,&oldb,&oldm))goto done;
     if(secure(c,&m,&oldm))goto done;
+    if(tb_settings_host(c->root,c->state))goto done;
     if(state(c,"staging"))goto done;
     if(copybundle(c,source,&b,&m) || syncall(c->slot))goto done;
     if(state(c,"ready"))goto done;
@@ -808,21 +811,24 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
     if(lstat(arg,&st))goto done;
         if(S_ISDIR(st.st_mode))r=prepare(&c,arg);
         else {
-            /* The archive is first copied under the trusted system state. */
-            int in=open(arg,O_RDONLY|O_NOFOLLOW|O_CLOEXEC),out=openat(c.state,"incoming.tbundle",O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW|O_CLOEXEC,0600);
+            /* A workstation archive can hold private settings. Keep the
+             * trusted copy outside public product state; only the manifest's
+             * tree/placed payload is copied into system staging. */
+            char temp[]="/tmp/tam-bundle-import-XXXXXX";
+            if(!mkdtemp(temp))goto done;
+            int private=open(temp,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+            int in=open(arg,O_RDONLY|O_NOFOLLOW|O_CLOEXEC),out=private<0?-1:openat(private,"incoming.tbundle",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
             int ok=in>=0 && out>=0 && !tam_fs_clone_or_copy(in,out,NULL) && !fsync(out);
             if(in>=0)close(in);
     if(out>=0)close(out);
-    if(!ok)goto done;
-            char *base=tam_path_join(root,"var/lib/tamlinux"),*incoming=tam_path_join(base,"incoming.tbundle");
-            tb_remove_at(c.state,base,"incoming");
-    int fd=directory(c.state,"incoming",true);
+            char *incoming=tam_path_join(temp,"incoming.tbundle");
+    int fd=private<0?-1:directory(private,"incoming",true);
+    if(fd>=0)fchmod(fd,0700);
     if(fd>=0)close(fd);
-            char *dest=tam_path_join(base,"incoming");
-            if(fd>=0 && !tb_archive_unpack(incoming,dest))r=prepare(&c,dest);
-            tb_remove_at(c.state,base,"incoming");
-    unlinkat(c.state,"incoming.tbundle",0);
-            free(base);
+            char *dest=tam_path_join(temp,"incoming");
+            if(ok && fd>=0 && !tb_archive_unpack(incoming,dest))r=prepare(&c,dest);
+            if(private>=0)close(private);
+            tb_remove_at(AT_FDCWD,"/",temp+1);
     free(incoming);
     free(dest);
         }

@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-#define TB_VERSION "0.6.0"
+#define TB_VERSION "0.7.0"
 #define TB_FORMAT 2               /* newest record format this program reads */
 #define TB_DEFAULT_SLOT "/usr/lib/tamlinux"
 #define TB_SYSTEM_STATE "/var/lib/tam-bundle"
@@ -49,6 +49,8 @@ typedef struct {
 typedef struct {
     int format;
     char **targets; size_t ntargets;
+    char *derived;
+    char **edits; size_t nedits;
     char      *name, *version, *hash, *host, *built;
     char     **sources; size_t nsources; /* "<component> <commit>" */
     char     **tools;   size_t ntools;
@@ -219,6 +221,8 @@ bool tb_test_pkexec(void);
 
 typedef struct {
     int format;
+    const char *derived;
+    const char *const *edits; size_t nedits;
     const char *const *targets; size_t ntargets;
     const char *name, *version, *host, *built; /* host NULL: any; built NULL: now */
     const char *const *sources; size_t nsources; /* "<component> <commit>" */
@@ -368,4 +372,12 @@ int tb_busy(const char *root, const char *old, const tb_manifest_t *m, bool stop
 int tb_v2_manifest(const char *dir, tb_manifest_t *m);
 void tb_hash_settings(const char *b, size_t bn, const char *m, size_t mn,
                       const char *settings, size_t sn, char out[TB_HASH_LEN+1]);
+int tb_settings_capture(const char *root);
+int tb_settings_host(const char *root, int state);
+int tb_settings_main(const char *root, const char *command, const char *arg);
+int tb_settings_archive_check(const char *dir, size_t *entries);
+int tb_settings_export(const char *root, const char *output, bool save_edits);
+int tb_settings_import(const char *root, const char *archive);
+bool tb_settings_private_output(const char *root, const char *output);
+int tb_settings_diff(const char *root, const char *path);
 #endif

@@ -24,7 +24,7 @@ text=$(sed 's/\\-/-/g' "$PAGE")
 help=$("$BIN" --help)
 
 # Commands: the first word of each indented line under "Commands:".
-commands=$(printf '%s\n' "$help" | sed -n '/^Commands:/,/^$/{/^  [a-z]/{s/^  \([a-z]*\).*/\1/;p}}')
+commands=$(printf '%s\n' "$help" | sed -n '/^Commands:/,/^$/{/^  [a-z]/{s/^  \([a-z][a-z-]*\).*/\1/;p}}')
 # Options: every --word or -o in the help text.
 options=$(printf '%s\n' "$help" | grep -oE '(^|[ [])(--[a-z-]+|-[a-z])\b' | tr -d ' [' | sort -u)
 

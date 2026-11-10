@@ -17,6 +17,129 @@
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
   switching](../../upstream/2026-11-09-file-bundles-and-atomic-switch.md).
 
+## 0.7 development checkpoint
+
+**Draft, not yet reviewed or accepted.** Development continues from the
+approved 0.6 formats below. The build-tree tool reports 0.7.0, while the
+installed tool and assembly pin remain at 0.5.2. Nothing here authorizes
+installation or a stage move.
+
+The draft implements private captures, explicit presence, secret exclusion,
+host marks, automatic capture at apply time, three-way defaults and
+`.tamlinux-new` cleanup, private workstation export/import and derived
+product exports. The settings half has its own recoverable file transaction
+and required user activation steps. The CLI exposes these parts separately
+so temporary-root tests can prove them before the delivery front end is
+wired. They are not yet the workstation's login or delivery mechanism.
+
+### Draft formats and interfaces
+
+Product defaults used by the settings engine live at
+`tree/defaults/home/<home-relative path>` in an archive, or
+`version/<id>/defaults/home/<path>` installed. The product's `SETTINGS` and
+the user's `settings.list` select files; a trailing slash expands the files
+under that directory, including defaults for files absent in home.
+User marks override product marks. Only explicit `absent` records delete
+files. Unlisted files and excluded files are left alone.
+
+```text
+CAPTURE:
+format 1
+user 1000
+host workstation
+host-id sha256:<64 hex>
+product tamlinux-0.7.0-<12 hex>
+created 20261110T180000Z.123456789
+complete yes
+hash sha256:<64 hex>
+
+FILES:
+format 1
+common present 0644 sha256:<64 hex> edited <base product id> - 0 .bashrc
+common absent 0000 - - <base product id> - 0 .config/old.conf
+common excluded 0644 - - <base product id> secret-pattern 2 .config/private.conf
+```
+
+`FILES` fields are mark, presence, original mode, hash, origin, base,
+exclusion reason, line number, path. Records use libtam's quoting for paths
+with spaces. The capture hash covers the exact `CAPTURE` bytes without its
+hash line, followed by `FILES`; file hashes cover the private snapshots.
+The id is `<numeric user>@<host>-<date>-<hash 12>`; the nanosecond timestamp
+in the hash distinguishes captures made within one second. Capture files
+are `0600`, directories `0700`. Files larger than 16 MiB and collections
+over 16,384 paths are not silently accepted. Reads compare inode, size and
+change time, retrying changed files three times. Links are currently
+excluded, including Home Manager links; converting managed settings to
+real files remains part of the migration and its recovery proof.
+
+The system's `host-id` is a public SHA-256 string. Prepare initializes it
+from a fixed prefix plus a valid DMI UUID; missing/placeholder UUIDs use a
+persistent random fallback and print a note. The raw UUID is never exported.
+
+The user transaction uses its own `format 1` record:
+
+```text
+id <32 random hex, or the system transaction id>
+system <exact system transaction id>
+from <old product id>
+to <new product id>
+capture <selected retained capture id, or ->
+automatic <switch-time capture id, or ->
+kind upgrade
+state ready
+done 0
+```
+
+All fields are required and unique. Ordinary upgrades/restores share the
+system transaction id. A settings-only switch has its own id and binds the
+exact completed system transaction through `system`; a stale record cannot
+pass after a product changes away and back. This settings-only rule is a
+draft refinement of the final design's two-record agreement, for review.
+`session-ready` is a file-level check, not installed session integration.
+
+Prepare writes only a plan. At apply, the engine takes the automatic
+capture, computes the result again and writes a private staged `CHANGES`:
+
+```text
+format 1
+write 0644 0644 <old hash or -> <new hash> .bashrc
+remove 0000 0644 <old hash> - .config/old.conf
+```
+
+Fields are operation, new mode, old mode, old hash, new hash, path. The
+engine checks every destination and staged source before any home rename.
+Both old and new contents/modes are recognized during retry; a foreign
+edit leaves the transaction incomplete. It checks mount ids, refuses links
+in parent paths and never writes outside the selected home. Required
+activation failure leaves **activating**, with completed steps counted.
+The trusted rootstock profile gains
+`user-step user-units-reload required <relative helper path>`; that required
+step must be present before the user record can become **complete**.
+
+New commands are `capture [-o FILE] [--save-edits]`, `import-settings FILE`,
+`prepare-settings [CAPTURE]`, `restore-settings CAPTURE`, `apply-settings`,
+`session-ready` and `settings diff PATH`. Workstation archives add a private
+`capture/` to the format-2 product archive. Export verifies running product
+bytes; edits require a new bundle hash, `derived-from` and explicit `edit`
+lines. Import verifies every listed snapshot and refuses unrecorded capture
+files. Workstation archives are `0600` and refused under public product
+state. System prepare uses a private temporary archive copy and copies only
+the product manifest's payload into system staging.
+
+### What must finish before 0.7 acceptance
+
+- Audit the new capture and transaction parsers, metadata bounds and the
+  agreement checks, including activation-profile changes during retry.
+- Extend durable-transition coverage beyond user apply to capture, user
+  prepare and import/export, plus changed-during-read and additional hostile
+  archive cases. The current user-apply test enumerates 59 events and also
+  runs randomized SIGKILL trials; this is not every 0.7 path yet.
+- Review these draft format/interface choices with the developer before
+  advancing to 0.8. Ownership/runtime checks, the actual settings list and
+  layering recipes, login/tam nut wiring and candidate delivery integration
+  remain later work. Real workstation, power-cut, console-repair and
+  Nix/Home Manager rollback proofs remain mandatory.
+
 ## 0.6 implementation review
 
 **Approved by the developer, 2026-11-10:** "Approve 0.6 formats; continue 0.7".

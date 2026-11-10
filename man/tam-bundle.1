@@ -135,6 +135,53 @@ say exactly which bundle is live.
 A previous live tree, kept whole for rollback at
 .IB slot /kept/ bundle-id /\fR.
 .SH COMMANDS
+.SS Private settings (0.7 development interface)
+.TP
+.BI capture " [\-o file] [\-\-save-edits]"
+Capture the selected user's listed settings into private state below HOME.
+Captures distinguish present, absent and excluded files; excluded files
+are never restored or removed. Known secret paths and detected secret
+patterns are excluded with their path and line number, never their value.
+With \-o, export a mode-0600 workstation archive containing product and capture.
+Edited product files require \-\-save-edits and produce a marked derived
+bundle with its own identity. Workstation archives are private and cannot
+be written under public product state.
+.TP
+.BI import-settings " file"
+Verify a transferred workstation archive and retain its capture privately.
+This changes no home setting. The product can be prepared separately with
+install; its system state never receives the private capture.
+.TP
+.BI prepare-settings " [capture-id]"
+Record the user's plan for a ready system transaction. With a capture id,
+plan restoration; otherwise plan an upgrade using old and new defaults.
+Actual home files are read and automatically captured when apply-settings
+runs, so edits after prepare are preserved.
+.TP
+.BI restore-settings " capture-id"
+Plan restoration of settings onto the current product. Settings and
+software from different products produce a warning. Common settings apply
+on another host; host settings stay local, with the new product default
+used only where the target has no file.
+.TP
+.B apply-settings
+Require a completed matching system transaction, automatically capture
+current settings, stage the result, and rename it into the user's home.
+Only explicitly absent files are removed; excluded and unlisted paths
+remain untouched. Upgrades retain edits and put changed defaults beside
+them as .tamlinux-new files. A required user activation failure leaves the
+transaction activating and returns exit 3; retry completes forward.
+.TP
+.B session-ready
+Require complete, agreeing system and user transactions. A settings-only
+switch has its own id and also binds the exact completed system transaction.
+A stale record cannot authorize a later product round trip.
+This interface is the file-level barrier; actual login integration comes
+with the tam nut and tam-deploy migration.
+.TP
+.BI settings " diff path"
+Show the user file, its base default and its new default. Refuse secret
+paths, detected secrets and binary settings rather than printing them.
 .SS Product transactions (format 2, development interface)
 .TP
 .BI install " bundle"

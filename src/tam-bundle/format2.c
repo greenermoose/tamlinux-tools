@@ -55,6 +55,8 @@ int tb_v2_verify(const char *dir) {
     int r = tb_tree_check(dir, &m, NULL, true, &c);
     /* Empty sections still have their two structural directories. */
     if (b.format == 2) {
+        size_t capture_entries=0;
+        if(tb_settings_archive_check(dir,&capture_entries))r=-1;
         const char *parts[]={"tree","placed"};
         for(size_t i=0;i<2;i++) {
             char *p=tam_path_join(dir,parts[i]);
@@ -93,7 +95,8 @@ static int number(const unsigned char *s, size_t n, unsigned long long *v) {
 }
 static bool layout(const char *p) {
     return !strcmp(p,"BUNDLE") || !strcmp(p,"MANIFEST") || !strcmp(p,"SETTINGS") ||
-        !strcmp(p,"tree") || !strcmp(p,"placed") || !strncmp(p,"tree/",5) || !strncmp(p,"placed/",7);
+        !strcmp(p,"tree") || !strcmp(p,"placed") || !strncmp(p,"tree/",5) || !strncmp(p,"placed/",7) ||
+        !strcmp(p,"capture") || !strncmp(p,"capture/",8);
 }
 static int pax(char *data, size_t size, char **path, char **link) {
     size_t off = 0;
@@ -203,10 +206,23 @@ done:
     return result;
 }
 int tb_archive_pack(const char *dir, const char *archive) {
-    const char *argv[]={"/usr/bin/tar","--format=pax","--pax-option=delete=atime,delete=ctime","-cf",archive,"-C",dir,"BUNDLE","MANIFEST","SETTINGS","placed","tree",NULL};
+    char *capture=tam_path_join(dir,"capture"); struct stat st;
+    bool private=capture && !lstat(capture,&st); free(capture);
+    int out=-1; char fdpath[80];
+    if(private) {
+        out=open(archive,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+        if(out<0)return -1;
+        snprintf(fdpath,sizeof fdpath,"/proc/%ld/fd/%d",(long)getpid(),out);
+    }
+    const char *argv[]={"/usr/bin/tar","--format=pax","--pax-option=delete=atime,delete=ctime","-cf",private?fdpath:archive,"-C",dir,"BUNDLE","MANIFEST","SETTINGS","placed","tree",private?"capture":NULL,NULL};
     tam_exec_result_t r=tam_exec(argv,120000);
     bool ok=r.exit_code==0;
      if(!ok)tb_err("cannot write bundle archive: %s",r.stderr_buf?r.stderr_buf:"");
     tam_exec_result_free(&r);
+    if(out>=0) {
+        if(ok && fsync(out))ok=false;
+        close(out);
+        if(!ok)unlink(archive);
+    }
      return ok?0:-1;
 }

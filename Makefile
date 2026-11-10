@@ -97,6 +97,7 @@ test: all bin/tam-bundle-test bin/tam-bundle-busy-test
 	@tests/tam-bundle/build.sh
 	@python3 -B tests/tam-bundle/namespace.py
 	@python3 -B tests/tam-bundle/format2.py
+	@python3 -B tests/tam-bundle/settings.py
 	@tests/man.sh
 	@if command -v xmllint >/dev/null; then \
 		sed 's|@BINDIR@|/usr/bin|g' data/org.tamlinux.bundle.policy.in | xmllint --noout - \

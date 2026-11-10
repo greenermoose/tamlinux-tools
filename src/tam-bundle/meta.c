@@ -230,6 +230,11 @@ static int bundle_line(void *user, size_t line, int format, char **f, size_t n) 
     }
     if (format == 2 && strcmp(k, "target") == 0)
         return push(&b->targets, &b->ntargets, v) ? 0 : 1;
+    if(format==2 && !strcmp(k,"derived-from"))return set_once(&b->derived,v,bp->what,line);
+    if(format==2 && !strcmp(k,"edit")) {
+        if(!tam_path_is_safe_rel(v))return bad(bp->what,line,"unsafe edited path");
+        return push(&b->edits,&b->nedits,v)?0:1;
+    }
     if (strcmp(k, "host") == 0) return set_once(&b->host, v, bp->what, line);
     if (strcmp(k, "built") == 0) return set_once(&b->built, v, bp->what, line);
     if (strcmp(k, "source") == 0) {
@@ -274,6 +279,7 @@ static void free_list(char **list, size_t n) {
 void tb_bundle_free(tb_bundle_t *b) {
     free(b->name); free(b->version); free(b->hash); free(b->host); free(b->built);
     free_list(b->targets, b->ntargets);
+    free(b->derived); free_list(b->edits,b->nedits);
     free_list(b->sources, b->nsources);
     free_list(b->tools, b->ntools);
     free_list(b->after, b->nafter);

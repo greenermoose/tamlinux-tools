@@ -291,6 +291,10 @@ static void problem(check_t *ck, const char *kind, const char *path, const char 
 static int check_cb(const tam_walk_entry_t *e, void *user) {
     check_t *ck = user;
     if (is_root_record(e)) return TAM_WALK_CONTINUE;
+    /* A workstation capture has its own hash and exhaustive verifier.
+     * Format-1 trees never gain an unrecorded exception. */
+    if(ck->m->format==2 && e->depth==1 && !strcmp(e->name,"capture") && S_ISDIR(e->st->st_mode))
+        return TAM_WALK_SKIP;
     const tb_entry_t *me = tb_manifest_find(ck->m, e->path);
     mode_t mode = e->st->st_mode;
     if (!me) {

@@ -39,6 +39,11 @@ int tb_seal(const char *dir, const tb_seal_t *o, char id[256]) {
     tam_str_t head = tam_str_new(o->format == 2 ? "format 2\n" : "format 1\n");
     head = tam_str_cat_printf(head, "name %s\nversion %s\n", o->name, o->version);
     tam_str_t tail = tam_str_new(NULL);
+    if(o->derived)tail=tam_str_cat_printf(tail,"derived-from %s\n",o->derived);
+    for(size_t i=0;i<o->nedits;i++) {
+        const char *fields[]={"edit",o->edits[i]};
+        tail=tam_rec_cat(tail,fields,2);
+    }
     for (size_t i = 0; i < o->nsources; i++) tail = tam_str_cat_printf(tail, "source %s\n", o->sources[i]);
     for (size_t i = 0; i < o->ntools; i++) tail = tam_str_cat_printf(tail, "tool %s\n", o->tools[i]);
     tail = tam_str_cat_printf(tail, "tool tam-bundle %s\n", TB_VERSION);

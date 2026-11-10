@@ -1,4 +1,4 @@
-# tam-bundle 0.6 transaction completion and format review
+# tam-bundle 0.6 completion and 0.7 settings draft
 
 - **Date**: 2026-11-10
 - **CLI Tool**: Codex CLI (`codex`) `0.167.0`
@@ -21,6 +21,10 @@
 Review response:
 
 > Approve 0.6 formats; continue 0.7
+
+Checkpoint question:
+
+> Is this a good place to end this session?
 
 ## Changes
 
@@ -65,3 +69,43 @@ These tests used temporary roots on tmpfs. They do not establish power-loss
 safety, real login/boot integration, second-workstation restoration or human
 acceptance. The installed 0.5.2 executable, assembly pin and workstation
 delivery were untouched. Nix/Home Manager delivery and rollback remain.
+
+## Subsequent 0.7 development checkpoint
+
+After the developer approved 0.6 and directed continuation, this session
+implemented the settings draft in `src/tam-bundle/settings.c` and its CLI,
+archive/identity support, manual and tests. It reports 0.7.0 in the build
+tree. It has not been installed, reviewed as complete or accepted.
+
+The draft includes private captures, presence, secret exclusions, stable-read
+checks, host marks/identity, automatic switch-time capture, three-way
+defaults and consumed `.tamlinux-new` cleanup, user file transactions and
+required activation retries, private workstation export/import, derived
+product identity for saved edits, settings diff and an agreement check.
+System archive preparation now keeps the trusted input in a private
+temporary directory so personal captures never enter public product state.
+
+The final `make test` passed on 2026-11-10 with ASan/UBSan, mandatory PID
+namespace/private-proc containment and no host fallback:
+
+- All 25 format-2 product tests remained green (57 prepare events, 29 apply
+  events and 12 randomized kill trials).
+- All 13 settings tests passed, including 59 user apply events and 12
+  randomized kill trials, activation failure/retry, refusing foreign edits
+  and stale transactions, secret and host handling, three-way behavior,
+  settings diff and `.tamlinux-new` cleanup.
+- A transferred archive restored settings after the original temporary home
+  was removed. A fresh temporary root received only product files in its
+  system state; its separate private home imported and restored the capture.
+- Edited product export refused by default; `--save-edits` produced a
+  verified derived identity and carried the actual edited executable.
+- Format-1/build/cache tests, manual/help and polkit checks remained green.
+
+This is a clean development checkpoint. Before 0.7 acceptance, finish the
+parser/metadata and transaction audit, including activation-profile changes
+during retry; extend durable coverage to capture, user prepare and
+import/export; then review the concrete draft formats with the developer.
+The public design records these open items. Actual settings layering and
+Home Manager link migration, native ownership/runtime checks, the tam nut,
+login and candidate integration, real hardware proofs and cutover remain
+later work. No claim of real-machine acceptance follows from these tests.

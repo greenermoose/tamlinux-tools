@@ -16,6 +16,13 @@ static const char usage_text[] =
     "  apply [--if-pending]         finish the prepared transaction before session use\n"
     "  cancel                       disarm staging or ready work\n"
     "  pack <dir> -o FILE           make a portable format 2 archive\n"
+    "  capture [-o FILE] [--save-edits]   capture settings or export a private workstation\n"
+    "  import-settings FILE        retain a transferred workstation's private capture\n"
+    "  prepare-settings [CAPTURE]  plan settings for the prepared product transaction\n"
+    "  restore-settings CAPTURE    plan a settings-only restoration\n"
+    "  apply-settings              capture current settings and finish the user's switch\n"
+    "  session-ready               require agreement of complete system/user transactions\n"
+    "  settings diff PATH          show the user's file, base and new default\n"
     "  seal <dir> --name N --version V [...]   record a built tree as a bundle\n"
     "  verify <dir>                 check a bundle, kept or live tree against its MANIFEST\n"
     "  needs <dir>                  report missing native commands or files\n"
@@ -504,9 +511,28 @@ int main(int argc, char **argv) {
     if (!o.nargs) return usage("no command given");
     const char *cmd = o.args[0];
 
+    if(!strcmp(cmd,"settings") && o.nargs==3 && !strcmp(o.args[1],"diff"))
+        return tb_settings_diff(o.root?o.root:"/",o.args[2]);
+
+    if(!strcmp(cmd,"import-settings")) {
+        if(o.nargs!=2)return usage("import-settings needs a workstation archive");
+        return tb_settings_import(o.root?o.root:"/",o.args[1]);
+    }
+
+    if(!strcmp(cmd,"capture") || !strcmp(cmd,"prepare-settings") || !strcmp(cmd,"restore-settings") ||
+       !strcmp(cmd,"apply-settings") || !strcmp(cmd,"session-ready")) {
+        if(!strcmp(cmd,"capture") && o.nargs==1 && o.output)
+            return tb_settings_export(o.root?o.root:"/",o.output,o.sw.save_edits);
+        if(o.nargs>2 || o.output || o.sw.save_edits)return usage("unexpected settings arguments");
+        return tb_settings_main(o.root?o.root:"/",cmd,o.nargs==2?o.args[1]:NULL);
+    }
+
     if (!strcmp(cmd, "pack")) {
         if (o.nargs != 2 || !o.output) return usage("pack needs a directory and -o ARCHIVE");
         if (tb_v2_verify(o.args[1])) return TB_FAIL;
+        size_t private_entries=0;
+        if(tb_settings_archive_check(o.args[1],&private_entries))return TB_FAIL;
+        if(private_entries && !tb_settings_private_output(o.root?o.root:"/",o.output))return TB_FAIL;
         char *output = absolute(o.output, false);
         int r = output ? tb_archive_pack(o.args[1], output) : -1;
         free(output); return r ? TB_FAIL : TB_OK;
