@@ -529,10 +529,22 @@ version:
   tool that rolls it back.
 - The empty slot `/usr/lib/tamlinux/` and its `kept/` directory.
 - The polkit action that lets `pkexec tam-bundle` run the privileged part.
-- Environment settings that put `current/bin` on `PATH`, `current/share`
-  on `XDG_DATA_DIRS` and `current/share/man` on the manual path, in the
-  distribution's vendor location (`/usr/lib/environment.d/` for the
-  session).
+- Environment settings that put `current/bin` on `PATH` and
+  `current/share` on `XDG_DATA_DIRS`. man-db finds `current/share/man`
+  from `PATH`, so the manual path needs no setting.
+  - `/etc/profile.d/tamlinux.sh`, owned by the package, for login shells.
+    A text-console login reads `/etc/profile`, which reads this folder,
+    and a graphical session started from that login shell inherits it.
+    This is the one file the adapter places under `/etc`, as other
+    native packages do.
+  - `/usr/lib/environment.d/` for programs the user service manager
+    starts.
+  - A `user@.service` drop-in under `/usr/lib/systemd/system/` that sets
+    `XDG_DATA_DIRS` in the user service manager's own environment. A test
+    showed the manager builds its unit search path from its own
+    environment only, never from `environment.d`, so without the drop-in
+    it would not find `current/share/systemd/user`. The drop-in takes
+    effect at the next login.
 - The Wayland session entry, PAM configuration and any system units, all
   pointing at stable paths under `current/`.
 - Ordinary dependencies on the third-party packages Tamlinux needs, so
@@ -679,17 +691,10 @@ slot the user named.
   The exact split between product files (into the bundle) and personal
   files (into the user's own version control) is decided per file before
   step 5.
-- **User units.** Whether the user service manager finds units in
-  `current/share/systemd/user` through `XDG_DATA_DIRS` depends on that
-  variable being set in the manager's own environment at start, not only
-  for its services. This needs a test before step 3; the fallback is a
-  small fixed set of unit files in the native adapter that start programs
-  under `current/`.
-- **Login shells on a text console.** The vendor environment directory
-  covers the graphical session. A login shell on a text console reads
-  `/etc/profile`, where Tamlinux ships no files. Either the user's own
-  shell profile adds `current/bin`, or the adapter ships one documented
-  exception.
+- **User units.** Settled by test: the adapter's `user@.service` drop-in
+  (see "Native adapter package"). If it fails in a real login, the
+  fallback is a small fixed set of unit files in the adapter that start
+  programs under `current/`.
 - **Copying bundles between computers.** Any copy method works because
   `verify` checks the result; whether to add a `pack` command that writes
   one archive file is left until a second computer needs it.
