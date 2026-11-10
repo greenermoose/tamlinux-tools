@@ -468,9 +468,12 @@ removes it; nothing live has changed.
 ### Apply (when the desktop next starts, or at boot)
 
 Linux has no general "run this at the next login" hook, and none is
-needed: Tamlinux owns the command that starts the desktop. On a text-console
-login the user types `start`, which leads to the session entry
-`/usr/bin/tam-session`. Its first lines are the trigger:
+needed: Tamlinux owns the commands that start a session. On a text-console
+login the user types `start`, the tam nut's wrapper for `tam-start`, the
+activities menu; its first entry runs `tam-desktop`, the desktop entry.
+The text-only tier never runs `tam-desktop`, and a user may type
+`tam-desktop` directly, so both `tam-start` and `tam-desktop` begin with
+the trigger, one call to `tam-bundle apply --if-pending`:
 
 1. Nothing pending and no journal: go straight on (a stat or two).
 2. Otherwise run `pkexec tam-bundle apply` (the system part). A polkit rule
@@ -479,9 +482,10 @@ login the user types `start`, which leads to the session entry
    nothing new: apply only finishes what an authorized prepare already
    staged and armed.
 3. Run `tam-bundle apply-settings` as the user (the settings part).
-4. If the switch replaced `/usr/bin/tam-session`, re-execute the new one,
-   so the old session entry never starts the new version.
-5. Start the compositor.
+4. If the switch replaced the running command's own file, re-execute the
+   new one, so an old `tam-start` or `tam-desktop` never runs the new
+   version.
+5. Go on: show the menu, or start the compositor.
 
 Leaving the desktop returns to the text-console shell, so a switch needs no
 logout from the console, only `start` again.
@@ -531,10 +535,10 @@ runs as root and never follows links out of the home directory.
 synced, so recovery always goes forward: rerunning apply reads the
 journal, and for each step checks whether it is already done (the
 destination already has the new hash) or still to do (the staged file is
-still there). The boot ordering and the session entry both rerun it before
-any session starts. An apply that finds a state it did not produce (a
-destination with neither hash) stops, changes nothing more, and says what
-it found; the session entry then refuses to start the graphical session
+still there). The boot trigger and the session commands both rerun it
+before any session starts. An apply that finds a state it did not produce
+(a destination with neither hash) stops, changes nothing more, and says
+what it found; `tam-desktop` then refuses to start the graphical session
 and says how to recover from a text console.
 
 **What the user sees.** When the desktop starts after a pending switch:
@@ -571,7 +575,7 @@ logging in. The rootstock profile, not the bundle, lists them. On systemd:
   `logind.conf.d`, `system.conf.d`, `system-sleep`), `sysctl.d`,
   `tmpfiles.d`, `zram-generator.conf.d`;
 - polkit actions and rules; the Wayland session entry; the session
-  command `/usr/bin/tam-session`;
+  commands `/usr/bin/tam-desktop` and `/usr/bin/tam-start`;
 - anything under `udev`, `modules-load.d` or `modprobe.d`.
 
 A change to any of them is named at prepare and needs the user's approval
@@ -584,12 +588,24 @@ works from a text console with no graphical session and no polkit agent.
 Every command Tamlinux places in `/usr/bin` is `tam` or `tam-*`; `build`
 refuses any other name. That makes a collision with a distribution package
 very unlikely, and the ownership check catches the rest. The current
-exceptions are renamed: `suspend-unless-stay-awake` becomes a `tam-*`
-command.
+exceptions are renamed: the activities menu `start` becomes `tam-start`,
+and `suspend-unless-stay-awake` becomes a `tam-*` command. The old native
+`tam-session`, a compatibility entry from the display-manager era, is
+dropped; `tam-desktop` is the desktop entry.
 
-`hi` and `start` must keep working on every Tamlinux workstation, each
-leading to a `tam-*` command. How they are provided and how that is
-enforced is still open.
+**`hi` and `start`** must keep working on every Tamlinux workstation, each
+leading to a `tam` command. The tam nut ships them as tiny real scripts,
+not links: `/usr/bin/start` runs `tam-start` and `/usr/bin/hi` runs
+`tam hi`. Before the cultivar is installed, both say so and run
+`tam-nut welcome` instead, so they work from the moment the nut is
+installed. Three layers keep it so:
+
+- the rootstock's package manager owns both names through the tam nut
+  package, and refuses another package that installs the same files;
+- `tam-bundle build` refuses any name other than `tam` or `tam-*`, so a
+  cultivar can never take these names over;
+- `tam-bundle check` confirms that `hi` and `start` exist and lead to
+  `tam hi` and `tam-start`, and reports it when they do not.
 
 ## Ownership
 
@@ -668,6 +684,8 @@ Tamlinux reaches a machine in three steps:
    Arch and with `xbps-src` on Void later). It holds what is needed before
    any bundle exists, and nothing more:
    - `/usr/bin/tam-nut`, which welcomes the user and assesses the hardware;
+   - `/usr/bin/start` and `/usr/bin/hi`, tiny scripts leading to
+     `tam-start` and `tam hi` (see "Command names");
    - `/usr/bin/tam-bundle`, built static, so it needs no library and runs
      on glibc and musl rootstocks alike;
    - their manual pages, the polkit actions, and the polkit rule for
@@ -773,10 +791,11 @@ static against musl, or static glibc with no NSS lookups.
    unowned file at a placed path, are both refused before any change;
    files in `/usr/local`, an extra native package and a user's own
    `~/.local/bin` are untouched after install, restore and prune.
-7. **Login:** `start` with nothing pending adds no measurable delay; with
-   a pending switch it applies, re-executes the new session entry when it
-   changed, then starts the new version; with a busy old process it starts
-   the old version and leaves the switch armed.
+7. **Login:** `start` and `tam-desktop` with nothing pending add no
+   measurable delay; with a pending switch they apply, re-execute
+   themselves when the switch replaced them, then run the new version;
+   with a busy old process they run the old version and leave the switch
+   armed. `hi` and `start` work before the cultivar is installed.
 
 ## Migration order
 
@@ -802,13 +821,6 @@ proofs pass.
 
 ## Open
 
-- **`hi` and `start`:** how they are provided on every Tamlinux
-  workstation, leading to `tam-*` commands, and how that is enforced.
-  `start` matters most, because it is how the desktop starts and so how a
-  switch is applied. Proposed: the tam nut ships `/usr/bin/hi` and
-  `/usr/bin/start` as small real scripts running `tam-hi` and
-  `tam-session`; the rootstock's package manager then guards the names, and
-  `tam-bundle check` confirms both are present.
 - **The polkit rule for `org.tamlinux.bundle.apply`:** confirm on Arch
   that a text-console login counts as an active local session and that
   the rule allows exactly that action without a password.
