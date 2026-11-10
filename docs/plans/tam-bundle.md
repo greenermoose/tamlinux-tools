@@ -1051,11 +1051,13 @@ static against musl, or static glibc with no NSS lookups.
 4. **Forward and backward:** restore nonadjacent versions and different
    captures; verify placed files, removals, settings and post-install
    steps, and that nothing in `/etc` changed.
-5. **Interruption:** a fault point after every apply step and every
-   hundredth file, for both parts, and `SIGKILL` at random moments; after
-   each, the next apply finishes forward and `check --full` shows exactly
-   the new version. A power cut on real hardware during apply, at least
-   once, before the daily cutover.
+5. **Interruption:** a fault point at every durable transition (each
+   record state change, each rename and sync, every hundredth file) for
+   both parts, and `SIGKILL` at random moments; after each, the next apply
+   finishes forward, or a record short of **complete** blocks the desktop,
+   and `check --full` shows exactly the old or the new version. A power
+   cut on real hardware during apply, at least once, before the daily
+   cutover; it supplements the injected faults, never replaces them.
 6. **Ownership:** a placed path owned by a rootstock package, and an
    unowned file at a placed path, are both refused before any change;
    files in `/usr/local`, an extra native package and a user's own
@@ -1069,27 +1071,49 @@ static against musl, or static glibc with no NSS lookups.
    the switch goes ahead; an interpreted old program (a Python script
    from the old tree) is caught. `hi` and `start` work before the
    cultivar is installed.
+8. **Acceptance scenarios** (from the 2026-11-10 review): settings edited
+   and native packages changed after prepare; interruption between the
+   system and user parts; a failed required post-install step; a corrupt
+   rollback copy; a launch during apply; a declined busy prompt; an
+   excluded settings file beside an intentionally absent one; export with
+   edited product files; a nonadjacent rollback after a rootstock upgrade.
+9. **Repair and the way back:** repair from the text console with no
+   graphical session and no polkit agent; and, before Nix is retired, a
+   rollback from the first bundle-delivered version to the Nix and Home
+   Manager generation, including Home Manager's refusal to overwrite the
+   real settings files a bundle wrote.
 
 ## Migration order
 
 Each step lands only on the developer's approval, one at a time, with a
 rollback point. Nix and Home Manager stay the daily delivery until the
-proofs pass.
+proofs pass. The first supported scope is Arch, glibc, systemd and one
+active user; the Void profile is a shape in this design, not yet built.
 
-1. **Design review.** This document.
-2. **Tool.** `tam-bundle` 0.6.0: the format 2 bundle and capture, prepare
-   and apply, ownership and dependency checks, in temporary roots with the
-   crash tests. Built static.
+1. **Design review.** This document, with the 2026-11-10 review.
+2. **Tool, in three versions,** each in temporary roots with faults at
+   every durable transition:
+   - **0.6:** format 2, the transaction, prepare and apply;
+   - **0.7:** settings: capture, presence, the three-way rule and the
+     switch-time computation;
+   - **0.8:** ownership, the runtime contract and probes, the build
+     environment and the static build.
 3. **Recipes.** `tamlinux-packages` builds with `PREFIX=/usr`, the
-   placed/tree split and `needs` lines; components that install outside
-   the allowed roots are fixed.
-4. **Tam nut package.** The `tam-nut` package replaces `tamlinux-native`;
-   the dormant slot is converted to `version/<id>/` plus `current`.
-5. **Second workstation.** Proofs 2 to 6 on a second machine first.
-6. **Cutover on the daily workstation.** Home Manager's Tamlinux commands
-   leave `~/.local/bin` (the shadow warning confirms none remain) and the
-   Nix profile folders leave `PATH`.
-7. **`tam-deploy` back end, recovery anchor, then Nix removal,** each
+   placed/tree split, `needs` and `build-needs`; components that install
+   outside the allowed roots are fixed.
+4. **Tam nut package.** The `tam-nut` package replaces `tamlinux-native`,
+   with its hooks and boot trigger; the dormant slot is converted to
+   `version/<id>/` plus `current`.
+5. **`tam-deploy` back end and candidate records,** so `fred-stage`, Test,
+   Run and back use tam-bundle before any real delivery.
+6. **Second workstation** (the sacrificial test host first): proofs 2 to
+   9.
+7. **Cutover on the daily workstation** through an ordinary Test of an
+   exact candidate and Run on the developer's word. Home Manager's
+   Tamlinux commands leave `~/.local/bin` (the shadow warning confirms none
+   remain) and the Nix profile folders leave `PATH`.
+8. **Recovery anchor, then Nix removal.** A bundle-delivered release
+   becomes the anchor; then Nix and Home Manager retire, each step
    separately approved.
 
 ## Open
