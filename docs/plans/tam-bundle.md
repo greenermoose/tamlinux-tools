@@ -66,7 +66,10 @@ chains, daemon or language.
    recipe for installing the Tamlinux software. It never carries Hyprland,
    Quickshell or their libraries. The rootstock only has to let tam-bundle
    run; tam-bundle checks the list, names what is missing, and the user
-   resolves it. A bundle is as portable as that check.
+   resolves it. A bundle is as portable as that check. The promise is
+   exactly this: tam-bundle restores these exact Tamlinux files and
+   selected settings **when the current rootstock satisfies their runtime
+   contract**; when it does not, tam-bundle says so before switching.
 7. **Settings are part of the bundle.** The settings that make up the
    Tamlinux experience are captured and restored with the product. Big
    application state is left out. Known secret folders are always refused
@@ -240,12 +243,18 @@ source tam <commit>
 tool cc gcc 16.2.1
 tool tam-bundle 0.6.0
 host alex-desktop <host-id>
+target arch x86_64 baseline x86-64-v2
+target libc glibc loader /lib64/ld-linux-x86-64.so.2
+target profile arch-systemd
 needs tam-bundle >= 0.6.0
 needs file /usr/bin/Hyprland >= 0.56               arch=hyprland
 needs file /usr/lib/libhyprbars.so                 arch=hyprland-plugin-hyprbars
 needs file /usr/bin/quickshell >= 0.3.0            arch=quickshell void=quickshell
 needs file /usr/lib/libdbus-1.so.3                 arch=dbus void=dbus
 needs file /usr/bin/python3 >= 3.12                arch=python void=python3
+needs qml Quickshell.Wayland 0.3                   arch=quickshell
+needs python gi                                    arch=python-gobject
+needs elf usr/bin/tam
 after user-units-reload
 after man-index
 built 2026-11-10T18:00:00Z
@@ -306,11 +315,38 @@ are the same on every rootstock and package names are not.
   - every script's `#!` interpreter, including `/usr/bin/env <name>`.
 
   What cannot be read from files (Python imports, QML imports, commands a
-  script runs) stays the recipe's job; the `tam` and shell test suites are
-  what catch omissions there.
-- **When it is checked:** at prepare, before anything changes, and again by
-  `tam-bundle needs <bundle>` at any time. Missing entries are listed all
-  at once, with their hints.
+  script runs) the recipe declares as probes; the `tam` and shell test
+  suites are the backstop for anything a probe cannot see.
+- **Target lines** come first and are checked first: architecture and CPU
+  baseline, libc and its loader, rootstock profile. A mismatch refuses at
+  once in plain words ("this bundle is for glibc; this machine uses
+  musl"). A static tam-bundle runs anywhere, but the product it installs
+  is dynamically linked and is only as portable as its target lines.
+- **Probes** check more than a path, each cheap and read-only:
+  - `needs qml <module> <version>`: the module's `qmldir` is found on the
+    QML import path with at least that version;
+  - `needs python <module>`: `python3 -I -c 'import <module>'` succeeds
+    with the rootstock's Python;
+  - `needs elf <path in bundle>`: every library that program needs
+    resolves on this machine, read from the files, never by running the
+    program.
+- **When it is checked:** at prepare, again at apply (see "Recheck and
+  secure"), before any rollback, after rootstock package changes (see
+  below), and by `tam-bundle needs <bundle>` at any time. Missing entries
+  are listed all at once, with their hints. Each check also covers the
+  retained bundles, and `tam-bundle status` says whether the recovery
+  anchor still meets its contract, so a rootstock upgrade that breaks the
+  anchor is reported when it happens, not during an emergency. Recovering
+  the rootstock itself is the rootstock's job (on Arch, Snapper root
+  snapshots).
+- **Rootstock package changes.** Bundles are not registered with the
+  rootstock's package manager, so it does not know what Tamlinux needs. The
+  tam nut, a native package, carries hooks that tell it: before a removal,
+  if a package being removed owns a file the installed cultivar needs, the
+  transaction is aborted with both named; after an upgrade, the contract is
+  checked again and a break is reported ("Quickshell 0.4 no longer provides
+  Quickshell.Wayland 0.3; the Tamlinux shell may not start"). On Arch these
+  are pacman hooks; Void's xbps triggers come with its port.
 
 ## Settings
 
@@ -858,6 +894,8 @@ Tamlinux reaches a machine in three steps:
    - the rootstock profile and the boot trigger for this rootstock's init
      system;
    - the empty `/usr/lib/tamlinux/` and `/var/lib/tamlinux/`;
+   - the package-manager hooks that guard the installed cultivar's
+     dependencies (see "The dependency list");
    - a dependency on polkit.
 3. **From the tam nut, install the full Tamlinux cultivar.** `tam-nut`
    assesses the hardware, picks the graphical or text-only cultivar bundle,
