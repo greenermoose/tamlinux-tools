@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -52,7 +53,7 @@ char *tb_state_dir(const char *dir, const char *state) {
     return out;
 }
 
-int tb_slot_open(tb_slot_t *s, const char *dir, const char *state, bool create) {
+int tb_slot_open(tb_slot_t *s, const char *dir, const char *state, bool create, bool plan_missing) {
     memset(s, 0, sizeof *s);
     s->fd = s->lock_fd = -1;
     if (!dir || dir[0] != '/') {
@@ -94,6 +95,7 @@ int tb_slot_open(tb_slot_t *s, const char *dir, const char *state, bool create) 
     }
     s->fd = open(s->dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (s->fd < 0) {
+        if (plan_missing && !create && errno == ENOENT) return 0;
         tb_err("cannot open slot %s: %s", s->dir, strerror(errno));
         return -1;
     }
@@ -130,6 +132,17 @@ int tb_slot_lock(tb_slot_t *s) {
         return -1;
     }
     return 0;
+}
+
+int tb_slot_plan_lock(tb_slot_t *s) {
+    char *path = tb_state_path(s, "lock");
+    s->lock_fd = path ? open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC) : -1;
+    int saved = errno;
+    free(path);
+    if (s->lock_fd < 0 && saved == ENOENT) return 0;
+    if (s->lock_fd >= 0 && flock(s->lock_fd, LOCK_SH | LOCK_NB) == 0) return 0;
+    tb_err("cannot read-lock slot %s: %s", s->dir, strerror(s->lock_fd < 0 ? saved : errno));
+    return -1;
 }
 
 /* ---- Intent ------------------------------------------------------------ */

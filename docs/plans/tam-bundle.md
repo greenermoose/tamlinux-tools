@@ -11,7 +11,8 @@
   has a page. 0.4.1 makes every changing command recover first (see
   "Interruption recovery"). 0.5.0 adds explicit make and install targets,
   pinned packaging files and the packaging source commit. Still to come:
-  full product recipes and the native adapter package.
+  full product recipes and the native adapter package. 0.5.1 makes dry-run
+  planning read-only even before the first slot/state directory exists.
 - **Component:** `tamlinux-tools`, its own version number, C on `libtam`,
   linked statically.
 - **Survey:** [2026-11-09 — File bundles, install records and atomic

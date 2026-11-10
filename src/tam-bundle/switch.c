@@ -393,9 +393,10 @@ int tb_recover_first(tb_slot_t *s, bool dry_run) {
 }
 
 static int prepare(tb_slot_t *s, char cur[256], bool dry_run) {
-    if (tb_slot_lock(s) != 0) return TB_FAIL;
+    if ((dry_run ? tb_slot_plan_lock(s) : tb_slot_lock(s)) != 0) return TB_FAIL;
     int r = tb_recover_first(s, dry_run);
     if (r != TB_OK) return r;
+    if (dry_run && s->fd < 0) { strcpy(cur, "-"); return TB_OK; }
     if (same_device(s, "current") != 0 || same_device(s, "kept") != 0) return TB_FAIL;
     if (tb_current_id(s, cur) != 0) return TB_FAIL;
     return TB_OK;

@@ -21,6 +21,10 @@
   bundle metadata. Files remain hashed and checked with the rest of the tree.
 - Separate install targets put `tam-file-select` in the product bundle and
   keep the rollback tool, manual and polkit action in the native adapter.
+- 0.5.1 corrects planning on a new or root-owned slot: dry runs take a shared
+  read-only lock when present and never create state. A first switch can be
+  planned before either the slot or its state exists. Native bring-up
+  exposed the missing-state case; new tests cover it and a read-only lock.
 
 ## Verification
 

@@ -108,7 +108,16 @@ expect 1 "seal refuses an unknown post-install step" tb seal "$BASE/badstep" --n
 # ---- Switch, back, status, where -------------------------------------------
 
 fresh_slot
+expect 0 "dry-run plans the first switch before the slot exists" tb --dry-run switch "$BASE/A"
+[ ! -e "$SLOT" ] && [ ! -e "$STATE" ] && pass "the first plan creates neither slot nor state" || fail "first plan wrote files"
+mkdir -p "$SLOT/kept"
+expect 0 "dry-run plans the first switch before state exists" tb --dry-run switch "$BASE/A"
+[ ! -e "$STATE" ] && pass "planning an empty slot creates no state" || fail "empty-slot plan wrote state"
 expect 0 "first switch into an empty slot" tb switch "$BASE/A"
+chmod 444 "$STATE/lock"
+expect 0 "dry-run can read a lock it cannot write" tb --dry-run switch "$BASE/B"
+expect 0 "dry-run recovery can read a lock it cannot write" tb --dry-run recover
+chmod 644 "$STATE/lock"
 [ "$(live_id)" = "$A" ] && pass "A is live" || fail "live is $(live_id), wanted $A"
 expect 0 "the live tree verifies in full" tb verify "$SLOT/current"
 expect 0 "switching to the live bundle is a no-op" tb switch "$BASE/A"

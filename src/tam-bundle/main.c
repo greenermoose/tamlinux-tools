@@ -308,7 +308,7 @@ static int cmd_keep(tb_slot_t *s, const opts_t *o, bool keep) {
         return usage(keep ? "keep needs a bundle id and a reason" : "unkeep needs a bundle id");
     const char *id = o->args[1];
     if (keep && strcmp(o->args[2], "previous") == 0) return usage("\"previous\" is set by switch and back");
-    if (tb_slot_lock(s) != 0) return TB_FAIL;
+    if ((o->sw.dry_run ? tb_slot_plan_lock(s) : tb_slot_lock(s)) != 0) return TB_FAIL;
     int rr = tb_recover_first(s, o->sw.dry_run);
     if (rr != TB_OK) return rr;
     if (keep && !kept_exists(s, id)) {
@@ -328,7 +328,7 @@ static int cmd_keep(tb_slot_t *s, const opts_t *o, bool keep) {
 }
 
 static int cmd_prune(tb_slot_t *s, const opts_t *o) {
-    if (tb_slot_lock(s) != 0) return TB_FAIL;
+    if ((o->sw.dry_run ? tb_slot_plan_lock(s) : tb_slot_lock(s)) != 0) return TB_FAIL;
     int rr = tb_recover_first(s, o->sw.dry_run);
     if (rr != TB_OK) return rr;
     tb_keep_t k;
@@ -505,7 +505,7 @@ int main(int argc, char **argv) {
 
     tb_slot_t s;
     bool create = changes && !o.sw.dry_run && (strcmp(cmd, "switch") == 0);
-    if (tb_slot_open(&s, o.slot, o.state, create) != 0) {
+    if (tb_slot_open(&s, o.slot, o.state, create, o.sw.dry_run && strcmp(cmd, "switch") == 0) != 0) {
         tb_slot_close(&s);
         return TB_FAIL;
     }
@@ -515,7 +515,7 @@ int main(int argc, char **argv) {
     } else if (strcmp(cmd, "back") == 0) {
         r = o.nargs <= 2 ? tb_back(&s, o.nargs == 2 ? o.args[1] : NULL, &o.sw) : usage("back takes at most one bundle id");
     } else if (strcmp(cmd, "recover") == 0) {
-        r = tb_slot_lock(&s) == 0 ? tb_recover(&s, o.sw.dry_run, NULL) : TB_FAIL;
+        r = (o.sw.dry_run ? tb_slot_plan_lock(&s) : tb_slot_lock(&s)) == 0 ? tb_recover(&s, o.sw.dry_run, NULL) : TB_FAIL;
         if (r == TB_OK) tb_note("%s is clean", s.dir);
     } else if (strcmp(cmd, "keep") == 0) r = cmd_keep(&s, &o, true);
     else if (strcmp(cmd, "unkeep") == 0) r = cmd_keep(&s, &o, false);

@@ -141,7 +141,7 @@ int tb_pkexec(char **args, const char *slot, const char *state) {
     if (ns) {
         tb_slot_t s;
         int sr = TB_FAIL;
-        if (tb_slot_open(&s, slot, state, false) == 0) sr = tb_run_steps(&s, steps, ns);
+        if (tb_slot_open(&s, slot, state, false, false) == 0) sr = tb_run_steps(&s, steps, ns);
         else tb_err("cannot open slot %s to run the session steps; run `tam-bundle after`", slot);
         tb_slot_close(&s);
         if (r == TB_OK && sr != TB_OK) r = TB_AFTER_FAILED;

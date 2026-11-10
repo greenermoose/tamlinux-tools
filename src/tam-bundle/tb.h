@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-#define TB_VERSION "0.5.0"
+#define TB_VERSION "0.5.1"
 #define TB_FORMAT 1               /* newest record format this program reads */
 #define TB_DEFAULT_SLOT "/usr/lib/tamlinux"
 #define TB_SYSTEM_STATE "/var/lib/tam-bundle"
@@ -133,13 +133,14 @@ typedef struct {
 /* Open a slot. `state` NULL picks /var/lib/tam-bundle/<name> for a slot
  * owned by root and $XDG_STATE_HOME/tamlinux/tam-bundle/<name> otherwise. With `create`, make
  * the slot, kept/ and state directories where missing. */
-int  tb_slot_open(tb_slot_t *s, const char *dir, const char *state, bool create);
+int  tb_slot_open(tb_slot_t *s, const char *dir, const char *state, bool create, bool plan_missing);
 /* The state directory tb_slot_open would choose. Caller frees. */
 char *tb_state_dir(const char *dir, const char *state);
 /* True when `dir`, or its nearest existing parent, belongs to root. */
 bool tb_owned_by_root(const char *dir);
 void tb_slot_close(tb_slot_t *s);
 int  tb_slot_lock(tb_slot_t *s);
+int  tb_slot_plan_lock(tb_slot_t *s); /* shared, read-only; no file created */
 char *tb_state_path(const tb_slot_t *s, const char *leaf); /* caller frees */
 /* Remove a slot-relative tree ("kept/<id>", "staging.<id>"), making its
  * directories writable first. Missing is success. */
