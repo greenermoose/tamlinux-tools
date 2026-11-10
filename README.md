@@ -65,8 +65,11 @@ tam-bundle [--slot DIR] build <recipes dir> <lock file> -o <dir> --version V [--
 with `--repos`. `build` exports each locked commit with `git archive`, runs
 `make` and `make install` for it, caches finished components under
 `$XDG_CACHE_HOME/tamlinux/tam-bundle/`, and seals the merged result for the
-slot's live tree. `--repos DIR` takes sources from local clones in `DIR`
-before fetching from a lock file's URL.
+slot's live tree. Each `make` runs in its own user and mount namespace at
+fixed paths under `/tmp/tam-bundle`, so the same lock gives the same bundle
+whatever the cache's path; this needs unprivileged user namespaces.
+`--repos DIR` takes sources from local clones in `DIR` before fetching from
+a lock file's URL.
 
 `tam-bundle --help` lists every command and option. The default slot is
 `/usr/lib/tamlinux`; any directory works as a slot, so tests and private

@@ -16,6 +16,11 @@
 
 > Continue plan 53 step 4: build and lock for tam-bundle.
 
+After a trial found build paths in the built programs, and three choices
+were offered (fix each component, fixed build paths, or both):
+
+> Option 3, both
+
 ## What changed
 
 - **New files in `src/tam-bundle/`:**
@@ -27,6 +32,9 @@
     environment with a log, the check that nothing lands outside the
     prefix, merging the outputs, and sealing;
   - `git.c`: finding, fetching and exporting exact commits through `git`;
+  - `isolate.c`: each `make` in its own user and mount namespace, with the
+    work tree and build-only dependencies (read-only) at fixed paths
+    under `/tmp/tam-bundle`;
   - `seal.c`: sealing, moved out of `main.c` so `seal` and `build` share
     it.
 - **`slot.c`:** tree removal now works under any directory, not only a
@@ -71,7 +79,13 @@
     leaves a bundle behind.
 - **Trial with real components:** `libtam` 3f06e4f (build-only) and
   `tamlinux-tools` b07df33 built into a three-entry bundle in about 1.5 s.
-- **Found, not fixed:** that trial, run again under a different
+- **Found and fixed:** at first that trial, run again under a different
   `$XDG_CACHE_HOME`, gave a different hash. `libtam` compiles with `-g`,
-  so its build directory, inside the cache, is in the debug information
-  linked into both programs. The design's "Open" section lists the choices.
+  so its build directory, inside the cache, was in the debug information
+  linked into both programs. With fixed build paths, the same old `libtam`
+  commit gives the same hash under two caches; with `libtam` 0.5.1
+  (`-ffile-prefix-map`) it does too, and no build path is left in the
+  programs.
+- `tests/tam-bundle/build.sh` now records the paths a build sees, so its
+  two same-hash checks fail if a cache path leaks in, and checks that a
+  build-only dependency is read-only to its dependants.

@@ -266,6 +266,22 @@ typedef struct {
 
 int  tb_build(const tb_build_opts_t *o);
 
+/* ---- Fixed build paths (isolate.c) ------------------------------------- */
+
+/* Builds run with their work tree at TB_BUILD_ROOT/work and each build-only
+ * dependency at TB_BUILD_ROOT/deps/<component>, whatever the cache's path. */
+#define TB_BUILD_ROOT "/tmp/tam-bundle"
+#define TB_MAX_BINDS 64
+
+typedef struct {
+    const char *from, *to;
+    bool        read_only;
+} tb_bind_t;
+
+/* In a child about to exec: enter a new user and mount namespace and mount
+ * each `from` at its `to`. 0, or -1 with errno and `why` naming the step. */
+int  tb_isolate(const tb_bind_t *binds, size_t n, const char **why);
+
 /* ---- Test fault points (fault.c) --------------------------------------- */
 
 /* In the test build, exit at once when $TAM_BUNDLE_FAULT names `point`;

@@ -55,8 +55,10 @@ printf 'PREFIX ?= /usr/local\nall:\n\t@true\ninstall:\n\tinstall -d $(DESTDIR)$(
 echo "hello from lib v1" > "$REPOS/lib/greeting"
 LIB1=$(commit_all "$REPOS/lib" "lib v1" "2026-01-01T00:00:00Z")
 
-# app: reads lib's greeting at build time through @lib@, records its prefix
-# and SOURCE_DATE_EPOCH, and installs a command, data and a link.
+# app: reads lib's greeting at build time through @lib@, records its prefix,
+# SOURCE_DATE_EPOCH and the paths it was built at (so the same-hash checks
+# below fail if a cache path leaks in), and installs a command, data and a
+# link.
 git -C "$REPOS/app" init -q -b main
 cat > "$REPOS/app/Makefile" <<'EOF'
 PREFIX ?= /usr/local
@@ -69,6 +71,7 @@ install: app
 	install -m 644 data $(DESTDIR)$(PREFIX)/share/app/data
 	echo "$$SOURCE_DATE_EPOCH $$LC_ALL $$TZ" > $(DESTDIR)$(PREFIX)/share/app/env
 	ln -sf ../../bin/app $(DESTDIR)$(PREFIX)/share/app/app-link
+	echo "$(CURDIR) $(LIB_PREFIX) $$(touch $(LIB_PREFIX)/probe 2>/dev/null && echo writable || echo read-only)" > $(DESTDIR)$(PREFIX)/share/app/paths
 EOF
 printf '#!/bin/sh\necho "@GREETING@ in @PREFIX@"\n' > "$REPOS/app/app.in"
 echo "app data" > "$REPOS/app/data"
@@ -131,6 +134,9 @@ grep -q '^tool make ' "$BASE/b1/BUNDLE" && grep -q '^needs command sh$' "$BASE/b
 [ "$(cat "$BASE/b1/share/app/env")" = "$APP1_TIME C UTC" ] \
     && pass "builds see SOURCE_DATE_EPOCH at the commit time, LC_ALL=C and TZ=UTC" \
     || fail "build environment: $(cat "$BASE/b1/share/app/env")"
+[ "$(cat "$BASE/b1/share/app/paths")" = "/tmp/tam-bundle/work/src /tmp/tam-bundle/deps/lib read-only" ] \
+    && pass "builds run at fixed paths, with build-only dependencies read-only" \
+    || fail "build paths: $(cat "$BASE/b1/share/app/paths")"
 [ -z "$(git -C "$REPOS/app" ls-files -o)" ] && pass "the build left the source repository alone" || fail "repo changed"
 [ -d "$XDG_CACHE_HOME/tamlinux/tam-bundle/git/app.git" ] && pass "sources came through the cache's mirror" \
     || fail "no mirror for app"

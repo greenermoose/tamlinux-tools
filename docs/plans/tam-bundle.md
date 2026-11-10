@@ -5,8 +5,7 @@
   `status`, `check`, `where`, `keep`, `prune` and `after`, with the crash
   and older-bundle tests; 0.2.0 adds `build` and `lock`. Still to come:
   privilege through `pkexec`, the `man-index` step, the man page and `tam`
-  pages, and the native adapter package. Open: build paths leak into
-  binaries with debug information (see "Open").
+  pages, and the native adapter package.
 - **Component:** `tamlinux-tools`, its own version number, C on `libtam`,
   linked statically.
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
@@ -211,6 +210,28 @@ prefix. Each build sees only `PATH` from the caller, plus
 `HOME` and `TMPDIR`, and `PKG_CONFIG_PATH` naming its build-only
 dependencies. A recipe may not set `PREFIX`, `DESTDIR` or
 `SOURCE_DATE_EPOCH`.
+
+**Fixed build paths.** A build directory can end up inside what is built:
+debug information records it, a static library carries it into every
+program that links it, and a pkg-config file names its prefix. So each
+`make` runs in its own user and mount namespace (no root needed; the
+caller's user and group map to themselves), where `/tmp` is a new, small
+tmpfs holding only fixed mount points:
+
+- `/tmp/tam-bundle/work` — the component's cache entry: `src`, `home`,
+  `tmp` and `dest`;
+- `/tmp/tam-bundle/deps/<component>` — each build-only component it builds
+  against, directly or through another, mounted read-only; a build-only
+  component's own build sees its prefix here, writable, and installs with
+  this `PREFIX`.
+
+The same lock therefore builds the same bytes whatever `$XDG_CACHE_HOME`
+is. Found 2026-11-09: `libtam` compiles with `-g`, and before this a build
+under another cache directory gave another hash. `libtam` 0.5.1 also maps
+its build directory out with `-ffile-prefix-map`, as "a component that
+fails is fixed rather than excused" asks. `build` needs unprivileged user
+namespaces, which Arch's and Void's kernels allow; where they are turned
+off, `build` stops and says so.
 
 `after-build` orders components. A build-only component (`output
 build-only`) installs into a private prefix in the build cache and
@@ -542,18 +563,6 @@ control. `tam-bundle` never writes in a home directory except into a home
 slot the user named.
 
 ## Open
-
-- **Build paths in binaries.** A component compiled with debug information
-  records its build directory, and a static library carries that path into
-  every program that links it. Build directories live in the build cache,
-  so the same lock built under a different `$XDG_CACHE_HOME` gives a
-  different hash. Found 2026-11-09 by building `libtam` (which compiles
-  with `-g`) and `tamlinux-tools` twice with two cache directories; the
-  same cache directory gives the same hash. Choices: fix each component
-  (`-ffile-prefix-map`), as "a component that fails is fixed rather than
-  excused" says; or have `build` run each make at one fixed path in a
-  private mount namespace, as Nix's sandbox does, which also hides build-only
-  prefixes; or both.
 
 - **Files programs rewrite.** Some programs rewrite their own settings
   files (for example an editor's or an agent's `settings.json`). For each

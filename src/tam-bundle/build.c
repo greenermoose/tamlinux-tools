@@ -87,7 +87,7 @@ static void find_tools(build_t *b) {
 static void make_key(build_t *b, comp_t *c) {
     tam_sha256_t h;
     tam_sha256_init(&h);
-    tam_str_t s = tam_str_new("tam-bundle build 1\n");
+    tam_str_t s = tam_str_new("tam-bundle build 2\nroot " TB_BUILD_ROOT "\n");
     s = tam_str_cat_printf(s, "component %s\ncommit %s\noutput %s\n", c->rc->name, c->lock->commit,
                            c->rc->build_only ? "build-only" : "bundle");
     if (!c->rc->build_only) s = tam_str_cat_printf(s, "prefix %s\n", b->o->prefix);
@@ -111,9 +111,11 @@ static void log_argv(int fd, const char *const argv[]) {
     dprintf(fd, "\n");
 }
 
-/* Run argv with exactly `envp`, standard input from /dev/null and both
- * output streams appended to `logfd`. The exit status, or -1. */
-static int run_logged(const char *const argv[], char *const envp[], int logfd) {
+/* Run argv at the fixed build paths `binds`, with exactly `envp`, standard
+ * input from /dev/null and both output streams appended to `logfd`. The
+ * exit status, or -1. */
+static int run_logged(const char *const argv[], char *const envp[], int logfd,
+                      const tb_bind_t *binds, size_t nbinds) {
     log_argv(logfd, argv);
     pid_t pid = fork();
     if (pid < 0) return -1;
@@ -123,6 +125,11 @@ static int run_logged(const char *const argv[], char *const envp[], int logfd) {
         dup2(logfd, 1);
         dup2(logfd, 2);
         umask(022);
+        const char *why = NULL;
+        if (tb_isolate(binds, nbinds, &why) != 0) {
+            dprintf(2, "tam-bundle: cannot set up the fixed build paths: %s: %s\n", why, strerror(errno));
+            _exit(126);
+        }
         execvpe(argv[0], (char *const *)argv, envp);
         dprintf(logfd, "tam-bundle: cannot run %s: %s\n", argv[0], strerror(errno));
         _exit(127);
@@ -144,6 +151,25 @@ static void show_log_tail(const char *log) {
     free(text);
 }
 
+/* Where a build-only component's private prefix appears during builds. */
+static char *fixed_dep(const comp_t *c) {
+    char *p = NULL;
+    return asprintf(&p, "%s/deps/%s", TB_BUILD_ROOT, c->rc->name) < 0 ? NULL : p;
+}
+
+/* The build-only components `c` builds against: those it names in
+ * after-build and, through them, theirs. */
+static void collect_deps(build_t *b, const comp_t *c, comp_t **list, size_t *n) {
+    for (size_t i = 0; i < c->rc->ndeps; i++) {
+        comp_t *d = comp_named(b, c->rc->deps[i]);
+        bool seen = false;
+        for (size_t k = 0; k < *n; k++) seen |= list[k] == d;
+        if (seen) continue;
+        if (d->rc->build_only && *n < TB_MAX_BINDS - 2) list[(*n)++] = d;
+        collect_deps(b, d, list, n);
+    }
+}
+
 /* "@dep@" in a make variable becomes that component's private prefix. */
 static char *expand_var(build_t *b, const char *var) {
     tam_str_t s = tam_str_new(NULL);
@@ -157,7 +183,10 @@ static char *expand_var(build_t *b, const char *var) {
         const char *end = strchr(at + 1, '@'); /* checked when the recipe was read */
         char name[128];
         snprintf(name, sizeof name, "%.*s", (int)(end - at - 1), at + 1);
-        s = tam_str_cat(s, comp_named(b, name)->out);
+        char *fixed = fixed_dep(comp_named(b, name));
+        s = fixed ? tam_str_cat(s, fixed) : NULL;
+        free(fixed);
+        if (!s) return NULL;
         p = end + 1;
     }
     char *out = s ? strdup(s) : NULL;
@@ -197,6 +226,14 @@ static int build_one(build_t *b, comp_t *c) {
     char *log = tam_path_join(c->entry, "log"), *done = tam_path_join(c->entry, "done");
     char **vars = calloc(rc->nvars + 1, sizeof *vars);
     char *env[10] = {0}, *prefix_var = NULL, *dest_var = NULL, jobs[32];
+    char *fixed_self = NULL, *fixed_deps[TB_MAX_BINDS] = {0};
+    comp_t *deps[TB_MAX_BINDS];
+    size_t ndeps = 0;
+    tb_bind_t binds[TB_MAX_BINDS];
+    size_t nbinds = 0;
+    /* The work tree as the build sees it. */
+    const char *w_src = TB_BUILD_ROOT "/work/src", *w_home = TB_BUILD_ROOT "/work/home";
+    const char *w_tmp = TB_BUILD_ROOT "/work/tmp", *w_dest = TB_BUILD_ROOT "/work/dest";
     int logfd = -1, result = TB_FAIL;
     long long when = 0;
 
@@ -219,18 +256,28 @@ static int build_one(build_t *b, comp_t *c) {
     }
     /* dup2 in the child clears close-on-exec on the copies it makes. */
 
+    /* The fixed paths: the work tree, this component's own prefix if it is
+     * build-only, and its build-only dependencies, read-only. */
+    binds[nbinds++] = (tb_bind_t){c->entry, TB_BUILD_ROOT "/work", false};
+    if (rc->build_only) {
+        if ((mkdir(c->out, 0755) != 0 && errno != EEXIST) || !(fixed_self = fixed_dep(c))) goto out;
+        binds[nbinds++] = (tb_bind_t){c->out, fixed_self, false};
+    }
+    collect_deps(b, c, deps, &ndeps);
+    for (size_t i = 0; i < ndeps; i++) {
+        if (!(fixed_deps[i] = fixed_dep(deps[i]))) goto out;
+        binds[nbinds++] = (tb_bind_t){deps[i]->out, fixed_deps[i], true};
+    }
+
     /* A small, fixed environment: only PATH comes from the caller. */
     const char *path = getenv("PATH");
     tam_str_t pc = tam_str_new(NULL);
-    for (size_t i = 0; i < rc->ndeps; i++) {
-        comp_t *dep = comp_named(b, rc->deps[i]);
-        if (!dep->rc->build_only) continue;
+    for (size_t i = 0; i < ndeps; i++)
         pc = tam_str_cat_printf(pc, "%s%s/lib/pkgconfig:%s/share/pkgconfig", tam_str_len(pc) ? ":" : "",
-                                dep->out, dep->out);
-    }
+                                fixed_deps[i], fixed_deps[i]);
     size_t ne = 0;
     if (asprintf(&env[ne++], "PATH=%s", path && path[0] ? path : "/usr/bin:/bin") < 0 ||
-        asprintf(&env[ne++], "HOME=%s", home) < 0 || asprintf(&env[ne++], "TMPDIR=%s", tmp) < 0 ||
+        asprintf(&env[ne++], "HOME=%s", w_home) < 0 || asprintf(&env[ne++], "TMPDIR=%s", w_tmp) < 0 ||
         asprintf(&env[ne++], "SOURCE_DATE_EPOCH=%lld", when) < 0 ||
         asprintf(&env[ne++], "PKG_CONFIG_PATH=%s", pc ? pc : "") < 0 || !(env[ne++] = strdup("LC_ALL=C")) ||
         !(env[ne++] = strdup("TZ=UTC"))) {
@@ -241,8 +288,8 @@ static int build_one(build_t *b, comp_t *c) {
 
     for (size_t i = 0; i < rc->nvars; i++)
         if (!(vars[i] = expand_var(b, rc->vars[i]))) goto out;
-    if (asprintf(&prefix_var, "PREFIX=%s", rc->build_only ? c->out : b->o->prefix) < 0 ||
-        asprintf(&dest_var, "DESTDIR=%s", dest) < 0)
+    if (asprintf(&prefix_var, "PREFIX=%s", rc->build_only ? fixed_self : b->o->prefix) < 0 ||
+        asprintf(&dest_var, "DESTDIR=%s", w_dest) < 0)
         goto out;
     long cpus = sysconf(_SC_NPROCESSORS_ONLN);
     snprintf(jobs, sizeof jobs, "-j%ld", cpus > 0 ? cpus : 1);
@@ -252,13 +299,13 @@ static int build_one(build_t *b, comp_t *c) {
         size_t a = 0;
         argv[a++] = "make";
         argv[a++] = "-C";
-        argv[a++] = src;
+        argv[a++] = w_src;
         argv[a++] = pass == 0 ? jobs : "install";
         for (size_t i = 0; i < rc->nvars && a < 155; i++) argv[a++] = vars[i];
         argv[a++] = prefix_var;
         if (pass == 1 && !rc->build_only) argv[a++] = dest_var;
         argv[a] = NULL;
-        int st = run_logged(argv, env, logfd);
+        int st = run_logged(argv, env, logfd, binds, nbinds);
         if (st != 0) {
             tb_err("%s: make%s failed (exit %d); the end of %s:", rc->name, pass ? " install" : "", st, log);
             show_log_tail(log);
@@ -299,7 +346,8 @@ out:
     if (bfd >= 0) close(bfd);
     for (size_t i = 0; vars && i < rc->nvars; i++) free(vars[i]);
     for (size_t i = 0; i < sizeof env / sizeof *env; i++) free(env[i]);
-    free(vars); free(prefix_var); free(dest_var);
+    free(vars); free(prefix_var); free(dest_var); free(fixed_self);
+    for (size_t i = 0; i < ndeps; i++) free(fixed_deps[i]);
     free(buildroot); free(src); free(home); free(tmp); free(dest); free(log); free(done);
     return result;
 }
