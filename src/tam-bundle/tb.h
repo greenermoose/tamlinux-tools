@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-#define TB_VERSION "0.3.1"
+#define TB_VERSION "0.4.0"
 #define TB_FORMAT 1               /* newest record format this program reads */
 #define TB_DEFAULT_SLOT "/usr/lib/tamlinux"
 #define TB_SYSTEM_STATE "/var/lib/tam-bundle"
@@ -276,6 +276,7 @@ typedef struct {
     char        *name, *host;
     char       **needs; size_t nneeds;
     char       **after; size_t nafter;
+    bool         index_man;        /* `index man`: build share/man's index */
     tb_recipe_t *v;     size_t n;  /* in build order */
 } tb_recipes_t;
 
@@ -294,6 +295,14 @@ typedef struct {
 } tb_build_opts_t;
 
 int  tb_build(const tb_build_opts_t *o);
+
+/* ---- The manual index (manindex.c) ------------------------------------- */
+
+/* Set every entry under <tree>/share/man to `epoch`, then run mandb on it,
+ * leaving share/man/index.db. Refuses a tree without share/man, or one
+ * where a component installed an index. */
+int   tb_man_index(const char *tree, long long epoch);
+char *tb_man_index_tool(void); /* "man-db <version>", or NULL; caller frees */
 
 /* ---- Fixed build paths (isolate.c) ------------------------------------- */
 

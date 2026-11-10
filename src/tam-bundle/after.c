@@ -95,9 +95,7 @@ static int run_step(const tb_slot_t *s, const char *step) {
         }
         argv[0] = cmd;
     } else {
-        /* man-index: the index location for a tree outside the standard
-         * manual path is not settled yet (see the design's open items). */
-        tb_note("post-install step %s: not available in tam-bundle %s; skipped", step, TB_VERSION);
+        tb_note("post-install step %s: unknown to tam-bundle %s; skipped", step, TB_VERSION);
         return STEP_SKIPPED;
     }
     tam_exec_result_t res = tam_exec(argv, 60000);

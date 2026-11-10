@@ -5,9 +5,9 @@
   `status`, `check`, `where`, `keep`, `prune` and `after`, with the crash
   and older-bundle tests; 0.2.0 adds `build` and `lock`; 0.3.0 adds
   privilege through `pkexec` and the polkit action, and 0.3.1 records the
-  user's session-step results. Still to come: the
-  `man-index` step, the man page and `tam` pages, and the native adapter
-  package.
+  user's session-step results; 0.4.0 builds the manual index into the
+  bundle (`index man`). Still to come: the man page and `tam` pages, and
+  the native adapter package.
 - **Component:** `tamlinux-tools`, its own version number, C on `libtam`,
   linked statically.
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
@@ -258,8 +258,11 @@ format 1
 name tamlinux
 host any
 needs command quickshell   arch=quickshell void=quickshell
-after man-index
+index man
+after shell-restart
 ```
+
+`index man` asks `build` for the manual index (see "The manual index").
 
 **`BUNDLE`** (identity):
 
@@ -272,10 +275,10 @@ source libtam <commit>
 source tam <commit>
 tool cc gcc 16.2.1
 tool tam-bundle 0.1.0
+tool man-db 2.13.1
 host any
 needs command quickshell   arch=quickshell void=quickshell
 needs file /usr/lib/libdbus-1.so.3   arch=dbus void=dbus
-after man-index
 after user-units-reload
 after shell-restart
 built 2026-11-09T18:00:00Z
@@ -313,7 +316,7 @@ fixed rather than excused.
 
 ```text
 2026-11-09T18:02:11Z switch tamlinux-0.7.0-3f9a0c1b2d4e from tamlinux-0.6.20-a1b2c3d4e5f6 ok 1.8s
-2026-11-09T18:02:12Z after man-index ok
+2026-11-09T18:02:12Z after user-units-reload ok
 2026-11-09T18:40:03Z back tamlinux-0.6.20-a1b2c3d4e5f6 from tamlinux-0.7.0-3f9a0c1b2d4e ok 0.1s
 ```
 
@@ -366,7 +369,7 @@ How it works:
   once each, recording each result in `session.<uid>`, which the root run
   created for it. Run with `sudo`, the root run creates the same file for
   `SUDO_UID`, so a later `tam-bundle after` by that user is recorded too.
-  System steps (`man-index`) run in the root run.
+  Any later step that needs no session would run in the root run.
 - **Refusals.** pkexec's own exit codes mean the program never ran: `126`
   (authorization refused or dismissed) and `127` (it could not run, as on
   a text console with no polkit agent). Each is reported with what to do
@@ -544,13 +547,49 @@ recovery, checks and the command line.
 The first fixed list. Each runs only if the bundle names it, and each is
 logged:
 
-- `man-index` — rebuild the manual index for `current/share/man`.
 - `user-units-reload` — `systemctl --user daemon-reload` in the invoking
   user's session.
 - `qml-cache-purge` — remove the desktop shell's compiled QML cache.
 - `shell-restart` — restart the desktop shell if it is running.
 
 Adding a step is a code change to `tam-bundle`, reviewed like any other.
+
+## The manual index
+
+`whatis`, `apropos` and `tam`'s section browsing read man-db's index, not
+the pages. The index is built into the bundle, not after install, so it
+always matches the pages it describes, rolls back with them and costs a
+switch nothing. This replaces an earlier post-install `man-index` step;
+no bundle with that step was ever delivered.
+
+- **Where it lives.** `current/share/man` is not one of man-db's system
+  hierarchies, so man-db keeps its index inside the hierarchy, as
+  `share/man/index.db` (and the same in any locale subdirectory). `man`,
+  `whatis` and `apropos` read it there from a read-only tree and write
+  nothing, there or in the home directory.
+- **How `build` makes it.** With `index man` in the bundle file, after
+  merging and before sealing, `build`:
+  1. refuses a bundle with no `share/man`, or one where a component
+     installed an index of its own;
+  2. sets every entry under `share/man` to the newest locked commit's
+     time, because the index records each page's modification time;
+  3. runs `mandb --create` on the hierarchy (given as an argument, which
+     every build of `mandb` reads, unlike `MANPATH`) in a fixed
+     environment: no home directory, `--config-file=/dev/null`, `LC_ALL=C`
+     and `TZ=UTC`;
+  4. removes the empty `cat<section>` directories `mandb` makes for
+     formatted pages, and refuses anything else it adds.
+- **Recorded and reproducible.** `index.db` is listed and hashed in
+  `MANIFEST` like any file, and `BUNDLE` records `tool man-db <version>`.
+  The same lock gives the same index bytes whatever the build directory,
+  file system or directory order (tested on tmpfs, ext4 and Btrfs with 400
+  pages, and with two builds of man-db 2.13.1). The man-db version is not
+  part of the components' cache keys, so a man-db update rebuilds no
+  component, only the index.
+- **Limits.** A man-db that changed its index format would need the bundle
+  rebuilt; the format has been `2.5.0` for many years. Running `mandb` as
+  root with the live tree on the manual path would rewrite the index, and
+  `check` would report it as edited.
 
 ## Size and speed
 

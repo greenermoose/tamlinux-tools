@@ -5,7 +5,8 @@
  *   name tamlinux
  *   host any                                   (optional)
  *   needs command quickshell arch=quickshell   (any number)
- *   after man-index                            (any number)
+ *   index man                                  (optional: build the manual index)
+ *   after shell-restart                        (any number)
  *
  * <dir>/<component>.recipe says how to build one component:
  *   format 1
@@ -81,11 +82,17 @@ static int bundle_line(void *user, size_t line, int format, char **f, size_t n) 
         return (r->host = strdup(f[1])) ? 0 : 1;
     }
     if (strcmp(f[0], "needs") == 0) return push(&r->needs, &r->nneeds, f[1]) ? 0 : 1;
+    if (strcmp(f[0], "index") == 0) {
+        if (strcmp(f[1], "man") != 0) return bad(bp->what, line, "index takes man");
+        if (r->index_man) return bad(bp->what, line, "repeated index man");
+        r->index_man = true;
+        return 0;
+    }
     if (strcmp(f[0], "after") == 0) {
         if (!tb_valid_step(f[1])) return bad(bp->what, line, "unknown post-install step");
         return push(&r->after, &r->nafter, f[1]) ? 0 : 1;
     }
-    return bad(bp->what, line, "unknown key (name, host, needs, after)");
+    return bad(bp->what, line, "unknown key (name, host, needs, index, after)");
 }
 
 /* ---- A recipe ---------------------------------------------------------- */

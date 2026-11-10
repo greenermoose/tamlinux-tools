@@ -171,6 +171,85 @@ expect 0 "and back to the first build" tb --quiet back
 [ "$("$SLOT/current/bin/app")" = "hello from lib v1 in $SLOT/current" ] && pass "rollback restores the first build" \
     || fail "after back: $("$SLOT/current/bin/app")"
 
+# ---- Manual index -------------------------------------------------------------
+
+# doc installs two manual pages and a link to one; MODE=index also installs
+# an index of its own, which build refuses.
+mkdir -p "$REPOS/doc"
+git -C "$REPOS/doc" init -q -b main
+cat > "$REPOS/doc/Makefile" <<'EOF_DOC'
+PREFIX ?= /usr/local
+all:
+	@true
+install:
+	install -d $(DESTDIR)$(PREFIX)/share/man/man1 $(DESTDIR)$(PREFIX)/share/man/man5
+	install -m 644 demo-tool.1 $(DESTDIR)$(PREFIX)/share/man/man1/demo-tool.1
+	install -m 644 demo.conf.5 $(DESTDIR)$(PREFIX)/share/man/man5/demo.conf.5
+	ln -sf demo-tool.1 $(DESTDIR)$(PREFIX)/share/man/man1/demo-alias.1
+	if [ "$(MODE)" = index ]; then echo x > $(DESTDIR)$(PREFIX)/share/man/index.db; fi
+EOF_DOC
+printf '.TH DEMO-TOOL 1\n.SH NAME\ndemo-tool \\- run the demo tool\n.SH DESCRIPTION\nDemo.\n' > "$REPOS/doc/demo-tool.1"
+printf '.TH DEMO.CONF 5\n.SH NAME\ndemo.conf \\- the demo settings file\n.SH DESCRIPTION\nDemo.\n' > "$REPOS/doc/demo.conf.5"
+DOC=$(commit_all "$REPOS/doc" "doc" "2026-05-01T00:00:00Z")
+DOC_TIME=$(git -C "$REPOS/doc" show -s --format=%ct "$DOC")
+cp "$LOCK" "$BASE/lock-doc"
+tb --quiet lock doc "$DOC" --lock "$BASE/lock-doc" --url "$REPOS/doc"
+DOCR=$(variant doc); printf 'format 1\ncomponent doc\nbuild make\n' > "$DOCR/doc.recipe"
+IDXR=$(variant index); cp "$DOCR/doc.recipe" "$IDXR/"; printf 'index man\n' >> "$IDXR/bundle"
+
+if command -v mandb >/dev/null && command -v whatis >/dev/null && command -v apropos >/dev/null; then
+    expect 0 "build with the doc component, no index" tb build "$DOCR" "$BASE/lock-doc" -o "$BASE/m0" --version 2.0
+    [ ! -e "$BASE/m0/share/man/index.db" ] && pass "without \`index man\` the bundle has no manual index" \
+        || fail "m0 has an index"
+    expect 0 "build with \`index man\`" tb build "$IDXR" "$BASE/lock-doc" -o "$BASE/m1" --version 2.0
+    [ "$(grep -c 'from the build cache' "$BASE/out")" = 3 ] \
+        && pass "adding the index rebuilds no component" || fail "index rebuilt components: $(cat "$BASE/out")"
+    grep -q '^f 0644 sha256:[0-9a-f]* *share/man/index.db$' "$BASE/m1/MANIFEST" \
+        && pass "share/man/index.db is in the MANIFEST, hashed like any file" \
+        || fail "MANIFEST: $(grep share/man "$BASE/m1/MANIFEST")"
+    grep -q '^tool man-db [0-9]' "$BASE/m1/BUNDLE" && pass "BUNDLE records the man-db version" \
+        || fail "BUNDLE tools: $(grep '^tool' "$BASE/m1/BUNDLE")"
+    [ "$(ls -A "$BASE/m1/share/man")" = "$(printf 'index.db\nman1\nman5')" ] \
+        && pass "mandb added only index.db" || fail "share/man holds: $(ls -A "$BASE/m1/share/man")"
+    grep -aq "$DOC_TIME" "$BASE/m1/share/man/index.db" \
+        && pass "the index records the newest locked commit's time" || fail "index time"
+    M1=$(id_of "$BASE/m1")
+    XDG_CACHE_HOME=$BASE/cache3 expect 0 "build the index again with an empty cache" \
+        tb build "$IDXR" "$BASE/lock-doc" -o "$BASE/m2" --version 2.0 --repos "$REPOS"
+    [ "$(id_of "$BASE/m2")" = "$M1" ] && cmp -s "$BASE/m1/share/man/index.db" "$BASE/m2/share/man/index.db" \
+        && pass "the same lock gives the same index and the same hash" \
+        || fail "index rebuild differs: $(id_of "$BASE/m2") vs $M1"
+
+    expect 0 "switch the indexed bundle into its slot" tb --quiet switch "$BASE/m1"
+    chmod -R a-w "$SLOT/current/share/man"
+    mt() { env -i PATH="$PATH" HOME="$BASE/home" MANPATH="$SLOT/current/share/man" "$@" 2>&1; }
+    mt whatis demo-tool | grep -q 'run the demo tool' && mt whatis demo-alias | grep -q 'run the demo tool' \
+        && pass "whatis finds the pages, and the link, from the live tree" || fail "whatis: $(mt whatis demo-tool)"
+    mt apropos -s 5 . | grep -q '^demo.conf (5)' && pass "apropos lists a section from the live tree" \
+        || fail "apropos: $(mt apropos -s 5 .)"
+    chmod -R u+w "$SLOT/current/share/man"
+    expect 0 "the live tree still matches after using the index" tb check --full
+    [ ! -e "$BASE/home" ] && pass "the manual tools wrote nothing in the home folder" || fail "home: $(find "$BASE/home")"
+    expect 0 "back to the bundle without manual pages" tb --quiet back
+    [ ! -e "$SLOT/current/share/man" ] && pass "rollback takes the index away with its pages" || fail "index left after back"
+
+    R=$(variant noman); printf 'index man\n' >> "$R/bundle"
+    expect 1 "build refuses \`index man\` for a bundle with no share/man" tb build "$R" "$LOCK" -o "$BASE/x-noman" --version 9
+    grep -q 'no share/man' "$BASE/out" && pass "  ...and says why" || fail "noman message: $(cat "$BASE/out")"
+    R=$(variant ownidx); printf 'format 1\ncomponent doc\nbuild make\nmake-vars MODE=index\n' > "$R/doc.recipe"
+    printf 'index man\n' >> "$R/bundle"
+    expect 1 "build refuses a component that installs its own manual index" \
+        tb build "$R" "$BASE/lock-doc" -o "$BASE/x-ownidx" --version 9
+    no_output() { [ ! -e "$1" ] && [ ! -e "$1.partial" ]; }
+    no_output "$BASE/x-ownidx" && pass "  ...and leaves no bundle behind" || fail "ownidx left output"
+else
+    echo "  [SKIP] man-db is not installed; manual index not tested"
+fi
+R=$(variant idxkind); printf 'index info\n' >> "$R/bundle"
+expect 1 "build refuses an index of anything but man" tb build "$R" "$LOCK" -o "$BASE/x-idxkind" --version 9
+R=$(variant oldstep); printf 'after man-index\n' >> "$R/bundle"
+expect 1 "man-index is no longer a post-install step" tb build "$R" "$LOCK" -o "$BASE/x-oldstep" --version 9
+
 # ---- Refusals ----------------------------------------------------------------
 
 no_output() { [ ! -e "$1" ] && [ ! -e "$1.partial" ]; }

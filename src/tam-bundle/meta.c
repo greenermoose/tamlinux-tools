@@ -4,8 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-const char *const tb_steps[] = {"man-index", "user-units-reload", "qml-cache-purge",
-                                "shell-restart", NULL};
+/* The manual index is not a step: `build` makes it into the bundle
+ * (`index man` in the bundle file). */
+const char *const tb_steps[] = {"user-units-reload", "qml-cache-purge", "shell-restart", NULL};
 
 bool tb_valid_step(const char *s) {
     for (int i = 0; tb_steps[i]; i++)

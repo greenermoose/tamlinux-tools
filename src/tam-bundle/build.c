@@ -533,6 +533,7 @@ int tb_build(const tb_build_opts_t *o) {
     find_tools(&b);
 
     size_t built = 0;
+    long long newest = 0; /* the newest locked commit: the manual index's time */
     for (size_t i = 0; i < b.n; i++) {
         comp_t *c = &b.c[i];
         const char *name = c->rc->name, *commit = c->lock->commit;
@@ -546,6 +547,9 @@ int tb_build(const tb_build_opts_t *o) {
             c->repo = tam_path_join(b.cache, git_leaf);
             if (!c->repo || tb_git_fetch(c->repo, c->lock->url, commit) != 0) goto out;
         }
+        long long when = 0;
+        if (b.r.index_man && tb_git_commit_time(c->repo, commit, &when) != 0) goto out;
+        if (when > newest) newest = when;
         make_key(&b, c);
         char entry_leaf[200];
         snprintf(entry_leaf, sizeof entry_leaf, "%s-%.*s", name, KEY_SHOWN, c->key);
@@ -585,6 +589,16 @@ int tb_build(const tb_build_opts_t *o) {
         goto out;
     }
     if (merge(&b, partial) != 0) goto out;
+    /* After the cache keys, so a man-db update rebuilds no component. */
+    if (b.r.index_man) {
+        char *tool = tb_man_index_tool();
+        if (!tool) {
+            tb_err("the bundle file asks for a manual index; install man-db, which provides mandb");
+            goto out;
+        }
+        b.tools[b.ntools++] = tool;
+        if (tb_man_index(partial, newest) != 0) goto out;
+    }
 
     const char **sources = calloc(b.n, sizeof *sources);
     char **source_text = calloc(b.n, sizeof *source_text);

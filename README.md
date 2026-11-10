@@ -69,7 +69,10 @@ slot's live tree. Each `make` runs in its own user and mount namespace at
 fixed paths under `/tmp/tam-bundle`, so the same lock gives the same bundle
 whatever the cache's path; this needs unprivileged user namespaces.
 `--repos DIR` takes sources from local clones in `DIR` before fetching from
-a lock file's URL.
+a lock file's URL. With `index man` in the recipes' bundle file, `build` also
+runs man-db's `mandb` on the bundle's `share/man`, so the manual index
+(`share/man/index.db`) is sealed with the pages and needs man-db at build
+time.
 
 On a slot that belongs to root (the default), `switch`, `back`, `recover`,
 `keep`, `unkeep` and `prune` run again as root through `pkexec`, then run
