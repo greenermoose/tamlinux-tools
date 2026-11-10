@@ -1,0 +1,738 @@
+.TH TAM-BUNDLE 1 "November 2026" "tamlinux-tools" "User Commands"
+.SH NAME
+tam-bundle \- install a named, versioned set of real files, switch between versions, roll back
+.SH SYNOPSIS
+.B tam-bundle
+.RI [ options ]
+.B build
+.I recipes lock
+.B \-o
+.I dir
+.B \-\-version
+.I V
+.br
+.B tam-bundle
+.B seal
+.I dir
+.B \-\-name
+.I N
+.B \-\-version
+.I V
+.RI [ seal\ options ]
+.br
+.B tam-bundle
+.B verify
+.RI | \ needs
+.I dir
+.br
+.B tam-bundle
+.RB [ \-\-slot
+.IR dir ]
+.B switch
+.I bundle
+.br
+.B tam-bundle
+.RB [ \-\-slot
+.IR dir ]
+.B back
+.RI [ bundle-id ]
+.br
+.B tam-bundle
+.RB [ \-\-slot
+.IR dir ]
+.BR status \ | \ check \ | \ recover \ | \ after
+.br
+.B tam-bundle
+.RB [ \-\-slot
+.IR dir ]
+.B where
+.I path
+.br
+.B tam-bundle
+.RB [ \-\-slot
+.IR dir ]
+.B keep
+.I bundle-id reason
+.br
+.B tam-bundle
+.RB [ \-\-slot
+.IR dir ]
+.B unkeep
+.I bundle-id
+.br
+.B tam-bundle
+.RB [ \-\-slot
+.IR dir ]
+.B prune
+.RB [ \-\-yes ]
+.br
+.B tam-bundle
+.B lock
+.I component commit
+.RB [ \-\-lock
+.IR file ]
+.RB [ \-\-url
+.IR url ]
+.RB [ \-\-repos
+.IR dir ]
+.br
+.B tam-bundle
+.BR \-\-version \ | \ \-\-help
+.SH DESCRIPTION
+.B tam-bundle
+packages a coherent set of files built from exact source commits, marks it
+as one thing with a name, a version and a content hash, and installs it as
+real files in real directories.
+It records what it installed, switches between versions in one step, and
+rolls back with one command.
+.PP
+It is not a general package manager.
+Third-party software comes from the distribution's own packages; a bundle
+only names the native commands and files it needs, and
+.B tam-bundle
+reports which are missing without installing them.
+.PP
+Nothing runs in the background: no daemon, socket, timer or polling.
+.B tam-bundle
+uses the network only when
+.B build
+has to fetch a locked commit that no local clone supplies.
+.SS Words used here
+.TP
+.B bundle
+A directory holding a built tree of files plus two records:
+.B BUNDLE
+(identity) and
+.B MANIFEST
+(file list).
+It can be copied anywhere and checked with
+.BR verify .
+.TP
+.B bundle id
+.IB name \- version \- hash12\fR,
+where
+.I hash12
+is the first 12 hexadecimal digits of the bundle hash, for example
+.BR tamlinux\-0.7.0\-3f9a0c1b2d4e .
+.TP
+.B slot
+The directory a bundle is installed into.
+The default is
+.BR /usr/lib/tamlinux .
+Any directory works as a slot, including one in a home directory, which
+needs no privilege.
+.TP
+.B live tree
+.IB slot /current/\fR,
+the files in use.
+Its
+.B BUNDLE
+and
+.B MANIFEST
+say exactly which bundle is live.
+.TP
+.B kept tree
+A previous live tree, kept whole for rollback at
+.IB slot /kept/ bundle-id /\fR.
+.SH COMMANDS
+.SS Building
+.TP
+.BI build " recipes lock " \-o " dir " \-\-version " V"
+Build a bundle from the exact commits in the lock file
+.I lock
+with the recipes in the directory
+.IR recipes ,
+and write it to
+.IR dir ,
+which must not exist.
+Each locked commit is exported with
+.BR "git archive" ;
+then
+.B make
+and
+.B "make install"
+run with
+.B PREFIX
+set to
+.IB slot /current
+(from
+.BR \-\-slot ,
+which must be absolute) and
+.B DESTDIR
+set to a private directory.
+Anything installed outside the prefix is refused, as are two components
+installing the same path.
+Each
+.B make
+runs in its own user and mount namespace at fixed paths under
+.BR /tmp/tam\-bundle ,
+with a fixed environment, so the same lock gives the same bundle whatever
+the cache's path.
+This needs unprivileged user namespaces; where they are turned off,
+.B build
+stops and says so.
+Finished components are cached and reused when their commit, recipe, tools
+and build dependencies are unchanged.
+With
+.B "index man"
+in the bundle file,
+.B build
+also runs
+.BR mandb (8)
+on the bundle's
+.B share/man
+and seals the manual index with the pages; this needs man-db at build time.
+Options:
+.BR \-\-host ,
+.BR \-\-repos ,
+.BR \-\-built .
+.TP
+.BI seal " dir " \-\-name " N " \-\-version " V"
+Write
+.B BUNDLE
+and
+.B MANIFEST
+for the built tree in
+.IR dir .
+This is
+.BR build 's
+last step, and how tests make bundles.
+Options:
+.BR \-\-host ,
+.BR \-\-source ,
+.BR \-\-tool ,
+.BR \-\-needs ,
+.BR \-\-after ,
+.BR \-\-built .
+.TP
+.BI lock " component commit"
+Set one component's commit in a lock file (default
+.BR tamlinux.lock ,
+or
+.BR \-\-lock ).
+Only that line is rewritten; comments and other lines stay as they were.
+Adding a component that has no line yet needs
+.BR \-\-url .
+A revision shorter than a full commit is resolved only in a local clone
+named with
+.BR \-\-repos ,
+never on a server.
+.SS Checking
+.TP
+.BI verify " dir"
+Hash every file in a bundle, kept tree or live tree and compare it with
+.BR MANIFEST ,
+then report extra, missing and edited entries.
+.TP
+.BI needs " dir"
+Report the bundle's native needs that are missing, each with the
+distribution packages that provide it.
+A need is checked by the presence of a command on
+.B PATH
+or of a file, never by asking the package manager.
+.TP
+.B status
+Show the slot, its state directory, the live bundle, the previous bundle,
+every kept tree with the reason it is protected, an interrupted switch if
+there is one, the last log line, and the last result of session steps left
+for each user.
+.TP
+.B check
+Compare the live tree with its
+.BR MANIFEST .
+A file whose size, inode, modification time and change time match the
+values recorded after the switch is not hashed; with
+.BR \-\-full ,
+every file is hashed.
+Edited, missing and extra files are listed.
+.TP
+.BI where " path"
+Name the bundle, version and recorded hash of one file in the live tree.
+.I path
+is the file's full path, beginning with
+.IB slot /current/\fR.
+.SS Changing the slot
+These commands take the slot's lock.
+With
+.BR \-\-dry\-run ,
+they say what they would change and change nothing.
+.TP
+.BI switch " bundle"
+Install the bundle directory
+.I bundle
+and make it live.
+The bundle is copied into a staging tree beside the live tree (unchanged
+files are cloned from the live tree where the file system supports it, as
+Btrfs does), synced to disk, and exchanged with the live tree in one
+.BR rename (2)
+call, so the slot never holds a half-installed tree.
+The tree that was live moves to
+.B kept/
+and is recorded as previous.
+.B switch
+refuses a bundle built for another host, one whose native needs are
+missing, and a live tree with edited, missing or extra files, which it
+names; with
+.BR \-\-save\-edits ,
+it copies edited and extra files to the state directory's
+.B saved/
+and continues.
+A bundle that is already kept is switched to without copying, as with
+.BR back .
+.TP
+.BR back " [\fIbundle-id\fR]"
+Make the previous kept tree, or the named one, live again.
+The kept tree is checked against its
+.B MANIFEST
+first
+.RB ( \-\-full
+hashes every file) and refused if it differs.
+Nothing is copied: the kept tree and the live tree are exchanged.
+.TP
+.B recover
+Finish or undo an interrupted switch.
+A switch stopped before the exchange is undone and the old tree stays
+live; one stopped after it is finished.
+A staging tree that never went live is removed.
+If the live tree is neither side of the recorded switch,
+.B recover
+changes nothing, prints what it found and exits with status 4.
+.B switch
+and
+.B back
+recover the same way before they start;
+.B status
+reports an interrupted switch and exits with status 4.
+.TP
+.BI keep " bundle-id reason"
+Protect a kept tree from
+.BR prune .
+.B previous
+is reserved; it is set by
+.B switch
+and
+.BR back .
+.TP
+.BI unkeep " bundle-id"
+Stop protecting a kept tree.
+.TP
+.BR prune " [" \-\-yes ]
+List kept trees that no reason protects, with their sizes, and remove them
+only with
+.BR \-\-yes .
+On Btrfs, kept trees share unchanged data, so less space may come back
+than the listed size.
+.TP
+.B after
+Run the live bundle's post-install steps as the invoking user.
+.SH OPTIONS
+.TP
+.BI \-\-slot " dir"
+The slot (default
+.BR /usr/lib/tamlinux ).
+.B build
+builds for this slot's live tree.
+.TP
+.BI \-\-state " dir"
+The state directory (default: see
+.BR FILES ).
+.TP
+.B \-\-dry\-run
+Say what would change; change nothing.
+.TP
+.B \-\-full
+Hash every file instead of trusting unchanged file status.
+.TP
+.B \-\-save\-edits
+Save edited and extra live files before switching.
+.TP
+.B \-\-yes
+Let
+.B prune
+remove what it lists.
+.TP
+.B \-\-quiet
+Print only errors.
+.TP
+.BI \-\-name " N\fR, " \-\-version " V"
+The bundle's name and version, for
+.BR seal ;
+.B \-\-version
+is also
+.BR build 's
+bundle version.
+Alone,
+.B \-\-version
+prints
+.BR tam-bundle 's
+own version and the newest record format it reads.
+.TP
+.BI \-\-host " H"
+Build the bundle for host
+.I H
+only (default
+.BR any ).
+.TP
+.BI \-\-source " \(dqCOMPONENT COMMIT\(dq"
+A source the bundle was built from; repeatable.
+.TP
+.BI \-\-tool " \(dqNAME VERSION\(dq"
+A tool the bundle was built with; repeatable.
+.TP
+.BI \-\-needs " \(dqcommand|file TARGET [distro=package ...]\(dq"
+A native command or file the bundle needs, with the packages that provide
+it on each distribution; repeatable.
+.TP
+.BI \-\-after " STEP"
+A post-install step; repeatable.
+.TP
+.BI \-\-built " TIME"
+The build time recorded in
+.BR BUNDLE .
+It is not part of the hash.
+.TP
+.BR \-o ", " \-\-output " \fIdir\fR"
+Where
+.B build
+writes the bundle.
+.TP
+.BI \-\-repos " dir"
+Take sources from local clones
+.IB dir / component
+before fetching from the lock file's URL.
+.TP
+.BI \-\-lock " file"
+The lock file for
+.B lock
+(default
+.BR tamlinux.lock ).
+.TP
+.BI \-\-url " url"
+The repository URL for a component that
+.B lock
+adds.
+.TP
+.BR \-h ", " \-\-help
+Print a summary of commands and options.
+.SH PRIVILEGE
+Run by a user other than root,
+.BR switch ,
+.BR back ,
+.BR recover ,
+.BR keep ,
+.B unkeep
+and
+.B prune
+on a slot that belongs to root (or that would be created under a directory
+of root's) run again as root through
+.BR /usr/bin/pkexec ,
+with
+.BR tam-bundle 's
+own absolute path and the same arguments.
+Relative paths given for the bundle and
+.B \-\-state
+are made absolute first.
+The root run leaves the post-install steps that need the user's session to
+the waiting user process, which runs them when
+.B pkexec
+returns.
+The polkit action is
+.BR org.tamlinux.bundle ;
+.B "make install"
+installs it under
+.IB PREFIX /share/polkit\-1/actions/\fR,
+and polkit reads actions only from
+.BR /usr/share/polkit\-1/actions .
+.PP
+If authorization is refused or dismissed
+.RB ( pkexec
+exit status 126), or
+.B pkexec
+cannot run, as on a text console with no polkit agent (127),
+.B tam-bundle
+says so and nothing changes.
+There, run the command with
+.BR sudo (8),
+then run
+.B "tam-bundle after"
+as yourself in the graphical session.
+.PP
+Dry runs, the reading commands, and every command on a slot of your own
+need no privilege.
+.SH POST-INSTALL STEPS
+A bundle names its steps with
+.B after
+lines.
+The list is fixed; a bundle cannot run anything else.
+Each step is logged.
+A failed step does not undo the switch, because the files are already in
+place; rerun it with
+.BR "tam-bundle after" .
+.TP
+.B user\-units\-reload
+.BR "systemctl \-\-user daemon\-reload" .
+.TP
+.B qml\-cache\-purge
+Run
+.BR tam\-qmlcache\-purge ,
+from the live tree's
+.B bin/
+or else from
+.BR PATH ;
+skipped if it is not installed.
+.TP
+.B shell\-restart
+Run
+.BR tam\-restart\-shell ,
+found the same way.
+.PP
+All three need the user's session.
+A root run started by
+.B pkexec
+leaves them to the user's waiting process; one started by
+.B sudo
+prints them as still to run.
+Either way, the results are recorded in the state directory's
+.BI session. uid
+file, which
+.B status
+shows.
+.SH FILES
+.SS The slot
+.TP
+.IB slot /current/
+The live tree, with its
+.B BUNDLE
+and
+.BR MANIFEST .
+.TP
+.IB slot /kept/ bundle-id /
+Kept trees.
+.TP
+.IB slot /staging. bundle-id /
+Present only during a switch.
+.SS State
+For a slot that belongs to root, or whose nearest existing parent does,
+state lives in
+.BI /var/lib/tam\-bundle/ name /\fR;
+for any other slot, in
+.BI $XDG_STATE_HOME/tamlinux/tam\-bundle/ name /\fR
+.RB ( ~/.local/state
+when
+.B XDG_STATE_HOME
+is unset).
+.I name
+is the slot directory's last component.
+.B \-\-state
+names another directory.
+Everything in it is readable by everyone; nothing in it is secret.
+.TP
+.B lock
+Held for the length of a changing command.
+.TP
+.B switch
+The intent file, present only while a switch or rollback is in progress.
+.TP
+.B log
+One line per switch, rollback, keep, prune and post-install step.
+.TP
+.BI session. uid
+Results of session steps that a root run left for that user.
+.TP
+.B keep
+Protected bundle ids, each with its reason.
+.TP
+.BI stat/ bundle-id
+File status of each live file, recorded after a switch, so
+.B check
+need not hash everything.
+.TP
+.BI saved/ bundle-id /
+Files saved by
+.BR \-\-save\-edits .
+.SS Build cache
+.TP
+.B $XDG_CACHE_HOME/tamlinux/tam\-bundle/
+.RB ( ~/.cache
+when
+.B XDG_CACHE_HOME
+is unset).
+.B build/
+holds finished components,
+.B git/
+bare mirrors fetched for locked commits, and
+.B lock
+allows one build at a time.
+.SH FORMATS
+Every record is plain UTF-8 text, one record per line, starting with a
+.B format
+line.
+Paths are relative to the tree and come last on a line.
+.B tam-bundle
+reads every format up to its own and refuses a newer one, naming the
+version it needs.
+.TP
+.B lock file
+.B component
+.I name url commit
+lines, one per component, with the full commit.
+.TP
+.IB recipes / component .recipe
+.BI component " name"\fR,
+.B "build make"
+(the only build kind),
+.B output bundle
+or
+.B output build\-only
+(a component other components build against, which contributes no files),
+.BI make\-vars " VAR=VALUE ..."
+(where
+.BI @ component @
+names a build-only component's prefix), and
+.BI after\-build " component ..."\fR.
+A recipe may not set
+.BR PREFIX ,
+.B DESTDIR
+or
+.BR SOURCE_DATE_EPOCH .
+.TP
+.IB recipes /bundle
+The bundle-wide part of
+.BR BUNDLE :
+.BR name ,
+.BR host ,
+.B needs
+and
+.B after
+lines, and
+.B "index man"
+to build the manual index.
+.TP
+.B BUNDLE
+Identity:
+.BR name ,
+.BR version ,
+.BR hash ,
+.BR source ,
+.BR tool ,
+.BR host ,
+.BR needs ,
+.B after
+and
+.B built
+lines.
+.TP
+.B MANIFEST
+One line per entry, sorted by path:
+.B d
+.I mode
+.B \-
+.IR path ,
+.B f
+.I mode
+.BI sha256: hex
+.IR path ,
+or
+.B l
+.B \-
+.I target path
+for a symbolic link, whose target must be relative and stay inside the
+tree.
+.PP
+The bundle hash is SHA-256 over
+.B BUNDLE
+without its
+.B hash
+and
+.B built
+lines, followed by
+.BR MANIFEST .
+.SH ENVIRONMENT
+.TP
+.B XDG_STATE_HOME
+State for slots not owned by root.
+.TP
+.B XDG_CACHE_HOME
+The build cache.
+.TP
+.B PATH
+Where native needs, build tools and post-install commands are found.
+Each build sees only
+.B PATH
+from the caller's environment.
+.TP
+.BR PKEXEC_UID ", " SUDO_UID
+In a root run, the user whose session steps are left to run.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Refused, or a check found problems.
+.TP
+.B 2
+Usage error.
+.TP
+.B 3
+A switch completed, but a post-install step failed.
+.TP
+.B 4
+An interrupted switch needs
+.BR "tam-bundle recover" .
+.SH EXAMPLES
+Try a slot of your own, which needs no privilege.
+Everything stays under
+.BR /tmp/demo ;
+remove that directory when done.
+.PP
+.RS
+.nf
+mkdir \-p /tmp/demo/v1/bin /tmp/demo/v2/bin
+printf \(aq#!/bin/sh\enecho one\en\(aq > /tmp/demo/v1/bin/hello
+printf \(aq#!/bin/sh\enecho two\en\(aq > /tmp/demo/v2/bin/hello
+chmod 755 /tmp/demo/v1/bin/hello /tmp/demo/v2/bin/hello
+tam\-bundle seal /tmp/demo/v1 \-\-name demo \-\-version 1
+tam\-bundle seal /tmp/demo/v2 \-\-name demo \-\-version 2
+alias tb=\(aqtam\-bundle \-\-slot /tmp/demo/slot \-\-state /tmp/demo/state\(aq
+tb switch /tmp/demo/v1
+tb switch /tmp/demo/v2
+/tmp/demo/slot/current/bin/hello        # two
+tb back
+/tmp/demo/slot/current/bin/hello        # one
+tb status
+.fi
+.RE
+.PP
+Build a bundle for the default slot from a lock file and local clones:
+.PP
+.RS
+.nf
+tam\-bundle build recipes tamlinux.lock \-o /var/tmp/tamlinux\-0.7.0 \e
+    \-\-version 0.7.0 \-\-repos \(ti/src
+tam\-bundle verify /var/tmp/tamlinux\-0.7.0
+tam\-bundle switch /var/tmp/tamlinux\-0.7.0
+.fi
+.RE
+.PP
+Roll back, and find where a file came from:
+.PP
+.RS
+.nf
+tam\-bundle back
+tam\-bundle where /usr/lib/tamlinux/current/bin/tam
+.fi
+.RE
+.SH SEE ALSO
+.BR pkexec (1),
+.BR sudo (8),
+.BR mandb (8),
+.BR git\-archive (1),
+.BR rename (2),
+.BR tam (1)
+.PP
+The design:
+.I docs/plans/tam\-bundle.md
+in the
+.B tamlinux\-tools
+repository.

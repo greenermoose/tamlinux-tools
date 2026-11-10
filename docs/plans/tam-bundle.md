@@ -6,8 +6,9 @@
   and older-bundle tests; 0.2.0 adds `build` and `lock`; 0.3.0 adds
   privilege through `pkexec` and the polkit action, and 0.3.1 records the
   user's session-step results; 0.4.0 builds the manual index into the
-  bundle (`index man`). Still to come: the man page and `tam` pages, and
-  the native adapter package.
+  bundle (`index man`). The manual page `man/tam-bundle.1` is installed
+  with it and checked against `--help` by `make test`. Still to come: the
+  `tam` pages and the native adapter package.
 - **Component:** `tamlinux-tools`, its own version number, C on `libtam`,
   linked statically.
 - **Survey:** [2026-11-09 — File bundles, install records and atomic

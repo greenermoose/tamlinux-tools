@@ -92,6 +92,7 @@ test: all bin/tam-bundle-test
 	@tests/run_tests.sh
 	@tests/tam-bundle/run.sh
 	@tests/tam-bundle/build.sh
+	@tests/man.sh
 	@if command -v xmllint >/dev/null; then \
 		sed 's|@BINDIR@|/usr/bin|g' data/org.tamlinux.bundle.policy.in | xmllint --noout - \
 		&& echo "  [PASS] the polkit action file is well-formed"; \
@@ -105,13 +106,16 @@ clean:
 # under another prefix carries an inert copy and pkexec asks for an
 # administrator through its general action instead.
 POLICY = share/polkit-1/actions/org.tamlinux.bundle.policy
+MANDIR ?= $(PREFIX)/share/man
 
 install: all
-	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/share/polkit-1/actions
+	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/share/polkit-1/actions $(DESTDIR)$(MANDIR)/man1
 	install -m 755 $(BIN) $(DESTDIR)$(PREFIX)/bin/
+	install -m 644 man/tam-bundle.1 $(DESTDIR)$(MANDIR)/man1/
 	sed 's|@BINDIR@|$(PREFIX)/bin|g' data/org.tamlinux.bundle.policy.in > $(DESTDIR)$(PREFIX)/$(POLICY)
 	chmod 644 $(DESTDIR)$(PREFIX)/$(POLICY)
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/tam-file-select $(DESTDIR)$(PREFIX)/bin/tam-bundle
 	rm -f $(DESTDIR)$(PREFIX)/$(POLICY)
+	rm -f $(DESTDIR)$(MANDIR)/man1/tam-bundle.1

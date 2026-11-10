@@ -81,7 +81,9 @@ polkit agent runs, as on a text console, run the command with `sudo` and
 then `tam-bundle after` as yourself. `make install` also installs the
 polkit action, `share/polkit-1/actions/org.tamlinux.bundle.policy`.
 
-`tam-bundle --help` lists every command and option. The default slot is
+`tam-bundle --help` lists every command and option, and the manual page
+[`man/tam-bundle.1`](man/tam-bundle.1), which `make install` installs,
+describes them with the files, formats and exit codes. The default slot is
 `/usr/lib/tamlinux`; any directory works as a slot, so tests and private
 tools use slots of their own. Exit `0` on success, `1` when refused or a
 check finds problems, `2` on usage errors, `3` when a switch completed but a
@@ -90,7 +92,9 @@ post-install step failed, and `4` when an interrupted switch needs
 
 `make test` builds `bin/tam-bundle-test`, which honours test fault points,
 and runs `tests/tam-bundle/run.sh` and `tests/tam-bundle/build.sh` (which
-needs `git` and `make`) in `$TAM_TEST_DIR` (default `$TMPDIR`).
+needs `git` and `make`) in `$TAM_TEST_DIR` (default `$TMPDIR`), then
+`tests/man.sh`, which formats the manual page with `groff` and checks that it
+names every command and option in `--help`.
 Run it on Btrfs and on ext4 directories to cover both file systems.
 
 ## Building and installation
