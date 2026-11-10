@@ -96,7 +96,8 @@ static int number(const unsigned char *s, size_t n, unsigned long long *v) {
 static bool layout(const char *p) {
     return !strcmp(p,"BUNDLE") || !strcmp(p,"MANIFEST") || !strcmp(p,"SETTINGS") ||
         !strcmp(p,"tree") || !strcmp(p,"placed") || !strncmp(p,"tree/",5) || !strncmp(p,"placed/",7) ||
-        !strcmp(p,"capture") || !strncmp(p,"capture/",8);
+        !strcmp(p,"capture") || !strcmp(p,"capture/CAPTURE") || !strcmp(p,"capture/FILES") ||
+        !strcmp(p,"capture/files") || !strncmp(p,"capture/files/",14);
 }
 static int pax(char *data, size_t size, char **path, char **link) {
     size_t off = 0;
@@ -151,6 +152,11 @@ int tb_archive_unpack(const char *archive, const char *dest) {
             size_t n = strlen(path);
      if (n && path[n-1]=='/') path[n-1]=0;
             if (!tam_path_is_safe_rel(path) || !layout(path) || mode > 0777) goto done;
+            /* Apply metadata and snapshot bounds before extracting bytes. */
+            if((!strcmp(path,"capture/CAPTURE") && size>4096) ||
+               ((!strcmp(path,"capture/FILES") || !strcmp(path,"SETTINGS") ||
+                 !strncmp(path,"capture/files/",14)) && size>16U*1024U*1024U) ||
+               (!strncmp(path,"capture/",8) && strlen(path)>=4096))goto done;
             if (count==0 && strcmp(path,"BUNDLE")) goto done;
             if (count==1 && strcmp(path,"MANIFEST")) goto done;
             char *slash = strrchr(path,'/'), *base = slash ? slash+1 : path;
@@ -208,10 +214,18 @@ done:
 int tb_archive_pack(const char *dir, const char *archive) {
     char *capture=tam_path_join(dir,"capture"); struct stat st;
     bool private=capture && !lstat(capture,&st); free(capture);
-    int out=-1; char fdpath[80];
+    int out=-1, parent=-1; char fdpath[80]; char *temp=NULL,*leaf=NULL;
     if(private) {
-        out=open(archive,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
-        if(out<0)return -1;
+        char *copy=strdup(archive),*slash=copy?strrchr(copy,'/'):NULL;
+        if(!copy)return -1;
+        leaf=strdup(slash?slash+1:copy);
+        if(slash)*slash=0;
+        parent=open(slash?(*copy?copy:"/"):".",O_RDONLY|O_DIRECTORY|O_CLOEXEC);
+        free(copy);
+        if(parent<0 || !leaf || !*leaf){if(parent>=0)close(parent); free(leaf); return -1;}
+        if(asprintf(&temp,"/proc/self/fd/%d/.tam-bundle-export-XXXXXX",parent)<0)temp=NULL;
+        out=temp?mkostemp(temp,O_CLOEXEC):-1;
+        if(out<0){close(parent); free(temp); free(leaf); return -1;}
         snprintf(fdpath,sizeof fdpath,"/proc/%ld/fd/%d",(long)getpid(),out);
     }
     const char *argv[]={"/usr/bin/tar","--format=pax","--pax-option=delete=atime,delete=ctime","-cf",private?fdpath:archive,"-C",dir,"BUNDLE","MANIFEST","SETTINGS","placed","tree",private?"capture":NULL,NULL};
@@ -221,8 +235,15 @@ int tb_archive_pack(const char *dir, const char *archive) {
     tam_exec_result_free(&r);
     if(out>=0) {
         if(ok && fsync(out))ok=false;
+        if(ok)tb_fault("settings-export-file-sync");
         close(out);
-        if(!ok)unlink(archive);
+        /* Publish complete bytes without replacing an existing archive. */
+        if(ok && linkat(parent,strrchr(temp,'/')+1,parent,leaf,0))ok=false;
+        if(ok)tb_fault("settings-export-publish");
+        unlinkat(parent,strrchr(temp,'/')+1,0);
+        if(ok && fsync(parent))ok=false;
+        if(ok)tb_fault("settings-export-directory-sync");
+        close(parent); free(temp); free(leaf);
     }
      return ok?0:-1;
 }

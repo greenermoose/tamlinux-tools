@@ -19,7 +19,7 @@
 
 ## 0.7 development checkpoint
 
-**Draft, not yet reviewed or accepted.** Development continues from the
+**Implemented and audited; concrete formats await review and acceptance.** Development continues from the
 approved 0.6 formats below. The build-tree tool reports 0.7.0, while the
 installed tool and assembly pin remain at 0.5.2. Nothing here authorizes
 installation or a stage move.
@@ -61,13 +61,21 @@ common excluded 0644 - - <base product id> secret-pattern 2 .config/private.conf
 ```
 
 `FILES` fields are mark, presence, original mode, hash, origin, base,
-exclusion reason, line number, path. Records use libtam's quoting for paths
-with spaces. The capture hash covers the exact `CAPTURE` bytes without its
+exclusion reason, line number, path. The last field is the rest of the
+line, so spaces within a path need no quoting; leading/trailing spaces,
+tabs, controls and unsafe relative paths are refused. The capture hash covers the exact `CAPTURE` bytes without its
 hash line, followed by `FILES`; file hashes cover the private snapshots.
 The id is `<numeric user>@<host>-<date>-<hash 12>`; the nanosecond timestamp
 in the hash distinguishes captures made within one second. Capture files
 are `0600`, directories `0700`. Files larger than 16 MiB and collections
-over 16,384 paths are not silently accepted. Reads compare inode, size and
+over 16,384 paths are not silently accepted. `CAPTURE` and transaction
+records are limited to 4 KiB each; `FILES`, `CHANGES`, settings lists and
+the activation profile to 16 MiB each. Paths are shorter than 4,096 bytes;
+directory expansion stops beyond 64 separators. `CHANGES` allows up to
+32,768 operations (a setting and its side file); user activation allows
+128 distinct steps. Metadata must be a stable regular file. The archive
+reader enforces capture metadata and snapshot size limits before extraction.
+Reads compare inode, size and
 change time, retrying changed files three times. Links are currently
 excluded, including Home Manager links; converting managed settings to
 real files remains part of the migration and its recovery proof.
@@ -88,6 +96,8 @@ automatic <switch-time capture id, or ->
 kind upgrade
 state ready
 done 0
+activation -
+changes -
 ```
 
 All fields are required and unique. Ordinary upgrades/restores share the
@@ -95,7 +105,14 @@ system transaction id. A settings-only switch has its own id and binds the
 exact completed system transaction through `system`; a stale record cannot
 pass after a product changes away and back. This settings-only rule is a
 draft refinement of the final design's two-record agreement, for review.
-`session-ready` is a file-level check, not installed session integration.
+Both readers reject missing, duplicate and unknown fields, unsupported
+formats, overflow and impossible presence/state combinations. The selected
+user must match the system record's uid. Product restores require the same
+transaction id, source and target in both records; settings-only restores
+bind the completed system id and target. Both `apply-settings` and
+`session-ready` reject stale or disagreeing records, even if the user
+record already says complete. `session-ready` is a file-level check, not
+installed session integration.
 
 Prepare writes only a plan. At apply, the engine takes the automatic
 capture, computes the result again and writes a private staged `CHANGES`:
@@ -108,6 +125,11 @@ remove 0000 0644 <old hash> - .config/old.conf
 
 Fields are operation, new mode, old mode, old hash, new hash, path. The
 engine checks every destination and staged source before any home rename.
+Before entering **applying**, `changes` becomes the SHA-256 of the exact
+`CHANGES` bytes. Every retry verifies it before using the plan. An empty,
+truncated or changed plan cannot discard pending operations. It remains
+`-` during **ready** and **staging**. Removal records use new mode `0000`;
+an absent old file uses old mode `0000`.
 Both old and new contents/modes are recognized during retry; a foreign
 edit leaves the transaction incomplete. It checks mount ids, refuses links
 in parent paths and never writes outside the selected home. Required
@@ -115,6 +137,13 @@ activation failure leaves **activating**, with completed steps counted.
 The trusted rootstock profile gains
 `user-step user-units-reload required <relative helper path>`; that required
 step must be present before the user record can become **complete**.
+`activation` is `-` until the activation phase loads its trusted profile,
+then the SHA-256 of the ordered step names, required/optional flags and
+helper paths, serialized as `format 1` with one three-field record per
+step. The hash and `done 0` are recorded before actions run. If that plan
+changes during retry, actions restart at zero; an old count cannot skip a
+new required action. Helpers must be idempotent and support repetition.
+Failure remains **activating**; completion requires a valid plan hash.
 
 New commands are `capture [-o FILE] [--save-edits]`, `import-settings FILE`,
 `prepare-settings [CAPTURE]`, `restore-settings CAPTURE`, `apply-settings`,
@@ -123,18 +152,31 @@ New commands are `capture [-o FILE] [--save-edits]`, `import-settings FILE`,
 bytes; edits require a new bundle hash, `derived-from` and explicit `edit`
 lines. Import verifies every listed snapshot and refuses unrecorded capture
 files. Workstation archives are `0600` and refused under public product
-state. System prepare uses a private temporary archive copy and copies only
+state. Export and import hold the user's state lock. Export writes a
+mode-0600 sibling temporary file, syncs its complete bytes, publishes it
+atomically with a non-replacing hard link, removes the temporary name and
+syncs the parent. An existing output is preserved and reported as a
+failure; after interruption, verify any published output before reusing it.
+Incomplete exports never appear at the requested output name. Import
+publishes a verified private capture by rename and is repeatable after
+publication. Abandoned private staging directories are never treated as
+retained captures or active plans. System prepare uses a private temporary archive copy and copies only
 the product manifest's payload into system staging.
 
-### What must finish before 0.7 acceptance
+### Verification and remaining acceptance
 
-- Audit the new capture and transaction parsers, metadata bounds and the
-  agreement checks, including activation-profile changes during retry.
-- Extend durable-transition coverage beyond user apply to capture, user
-  prepare and import/export, plus changed-during-read and additional hostile
-  archive cases. The current user-apply test enumerates 59 events and also
-  runs randomized SIGKILL trials; this is not every 0.7 path yet.
-- Review these draft format/interface choices with the developer before
+The completed audit covers bounded stable metadata reads, semantic capture
+records, exact transaction agreement, immutable retry plans and activation
+profile changes. The settings suite has 21 tests under ASan/UBSan. It
+enumerates 19 capture, 4 upgrade-prepare, 4 restore-prepare, 63 apply, 64
+export and 15 import fault events, and runs 36 randomized kill trials
+across those operations. Deterministic atomic replacement during all three
+read attempts produces an exclusion; hostile archives, FIFOs, oversized
+metadata, invalid fields and corrupt retry plans are refused. Signal tests
+require private PID namespaces and a freshly mounted private `/proc`;
+there is no host-process fallback.
+
+- Review these concrete format/interface choices with the developer before
   advancing to 0.8. Ownership/runtime checks, the actual settings list and
   layering recipes, login/tam nut wiring and candidate delivery integration
   remain later work. Real workstation, power-cut, console-repair and

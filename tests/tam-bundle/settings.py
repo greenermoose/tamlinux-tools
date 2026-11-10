@@ -7,6 +7,9 @@ import shutil
 import subprocess
 import tarfile
 import random
+import hashlib
+import io
+import signal
 import time
 import unittest
 import format2
@@ -264,6 +267,227 @@ class UserSettings(unittest.TestCase):
                 self.assertFalse((self.home/'.config/dropped').exists())
                 self.tb('session-ready')
         print(f'  checked {count} user apply durable transitions')
+
+    def reset_home(self,baseline):
+        shutil.rmtree(self.home); shutil.copytree(baseline,self.home,symlinks=True)
+
+    def enumerate_faults(self,label,command,baseline,check):
+        trace=self.base/(label+'.trace')
+        self.tb(*command,env={'TAM_BUNDLE_TRACE':str(trace)})
+        count=len(trace.read_text().splitlines())
+        self.assertGreater(count,0)
+        for point in range(1,count+1):
+            with self.subTest(operation=label,point=point):
+                self.reset_home(baseline)
+                check(point)
+        print(f'  checked {count} {label} fault events')
+
+    def test_capture_and_prepare_faults(self):
+        self.write('.bashrc','keep this setting')
+        baseline=self.base/'capture-baseline'; shutil.copytree(self.home,baseline)
+        def capture_fault(point):
+            self.tb('capture',code=99,env={'TAM_BUNDLE_FAULT_AT':str(point)})
+            self.tb('capture')
+            for cap in (self.state/'captures').iterdir():
+                self.assertEqual((cap/'files/.bashrc').read_text(),'keep this setting')
+                self.tb('restore-settings',cap.name)
+            self.assertEqual((self.home/'.bashrc').read_text(),'keep this setting')
+        self.enumerate_faults('capture',('capture',),baseline,capture_fault)
+        self.reset_home(baseline)
+        capture,_=self.capture()
+        self.tb('install',self.b)
+        planbase=self.base/'plan-baseline'; shutil.copytree(self.home,planbase)
+        def plan_fault(point):
+            self.tb('prepare-settings',code=99,env={'TAM_BUNDLE_FAULT_AT':str(point)})
+            self.tb('prepare-settings')
+            self.assertEqual((self.home/'.bashrc').read_text(),'keep this setting')
+            self.tb('session-ready',code=4)
+        self.enumerate_faults('prepare-settings',('prepare-settings',),planbase,plan_fault)
+        self.tb('cancel'); self.reset_home(planbase)
+        def restore_plan_fault(point):
+            self.tb('restore-settings',capture.name,code=99,env={'TAM_BUNDLE_FAULT_AT':str(point)})
+            self.tb('restore-settings',capture.name)
+            self.assertEqual((self.home/'.bashrc').read_text(),'keep this setting')
+            self.tb('session-ready',code=4)
+        self.enumerate_faults('restore-settings',('restore-settings',capture.name),planbase,restore_plan_fault)
+
+    def test_export_and_import_faults(self):
+        self.write('.bashrc','portable fault proof')
+        baseline=self.base/'export-baseline'; shutil.copytree(self.home,baseline)
+        output=self.base/'fault-export.tbundle'
+        def export_fault(point):
+            output.unlink(missing_ok=True)
+            self.tb('capture','-o',output,code=99,env={'TAM_BUNDLE_FAULT_AT':str(point)})
+            if not output.exists():self.tb('capture','-o',output)
+            self.assertEqual(output.stat().st_mode&0o777,0o600)
+            self.run_tb('verify',output)
+            before=output.read_bytes()
+            self.tb('capture','-o',output,code=1)
+            self.assertEqual(output.read_bytes(),before)
+        self.enumerate_faults('export',('capture','-o',output),baseline,export_fault)
+        self.reset_home(baseline)
+        importbase=self.base/'import-baseline'; shutil.copytree(self.home,importbase)
+        def import_fault(point):
+            self.tb('import-settings',output,code=99,env={'TAM_BUNDLE_FAULT_AT':str(point)})
+            self.tb('import-settings',output); self.tb('import-settings',output)
+            caps=list((self.state/'captures').iterdir()); self.assertEqual(len(caps),1)
+            self.write('.bashrc','later')
+            self.tb('restore-settings',caps[0].name); self.tb('apply-settings'); self.tb('session-ready')
+            self.assertEqual((self.home/'.bashrc').read_text(),'portable fault proof')
+        self.enumerate_faults('import',('import-settings',output),importbase,import_fault)
+
+    def test_activation_profile_change_restarts_required_steps(self):
+        self.write('.bashrc','capture'); capture,_=self.capture()
+        profile=self.root/'usr/share/tamlinux/rootstock/profile'
+        first=profile.parent/'reload'; second=profile.parent/'second'
+        second.write_text('#!/bin/sh\nexit 1\n'); second.chmod(0o755)
+        profile.write_text(profile.read_text()+'user-step second required usr/share/tamlinux/rootstock/second\n')
+        self.tb('restore-settings',capture.name); self.tb('apply-settings',code=3)
+        tx=self.state/'transaction'; self.assertIn('done 1',tx.read_text())
+        original_profile=profile.read_text(); profile.unlink(); os.mkfifo(profile)
+        self.tb('apply-settings',code=3); self.tb('session-ready',code=4)
+        profile.unlink(); profile.write_text(original_profile)
+        # A replacement first step must run even though old step 1 succeeded.
+        replacement=profile.parent/'replacement'
+        replacement.write_text('#!/bin/sh\nexit 1\n'); replacement.chmod(0o755)
+        profile.write_text(profile.read_text().replace('rootstock/reload','rootstock/replacement'))
+        second.write_text('#!/bin/sh\nexit 0\n')
+        self.tb('apply-settings',code=3)
+        self.assertIn('done 0',tx.read_text()); self.tb('session-ready',code=4)
+        replacement.write_text('#!/bin/sh\nexit 0\n'); self.tb('apply-settings'); self.tb('session-ready')
+
+    def test_retry_metadata_is_bound_and_strict(self):
+        self.write('.bashrc','capture'); capture,_=self.capture(); self.write('.bashrc','later')
+        self.tb('restore-settings',capture.name)
+        self.tb('apply-settings',code=99,env={'TAM_BUNDLE_FAULT':'settings-state-applying'})
+        tx=self.state/'transaction'; original=tx.read_text()
+        stage=next((self.state/'staging').iterdir()); changes=stage/'CHANGES'; original_changes=changes.read_text()
+        mutations=[original+'done 0\n',original.replace('done 0','done -1'),
+                   original.replace('done 0','done 129'),original.replace('state applying','state ready'),
+                   original.replace('format 1','format 2'), original.replace('automatic ','unknown ')]
+        for text in mutations:
+            with self.subTest(record=text):
+                tx.write_text(text); self.tb('apply-settings',code=4)
+                self.assertEqual((self.home/'.bashrc').read_text(),'later')
+        tx.write_text(original)
+        for text in ['format 1\n',original_changes+'garbage\n']:
+            changes.write_text(text); self.tb('apply-settings',code=4)
+            self.assertEqual((self.home/'.bashrc').read_text(),'later')
+        changes.write_text(original_changes)
+        self.tb('apply-settings'); self.tb('session-ready')
+
+    def test_random_kills_capture_prepare_export_import(self):
+        self.write('.bashrc','portable')
+        archive=self.base/'kill-source.tbundle'; self.tb('capture','-o',archive)
+        baseline=self.base/'kill-operations'; shutil.copytree(self.home,baseline)
+        rng=random.Random(708)
+        for command in [('capture',),('restore-settings',next((self.state/'captures').iterdir()).name),
+                        ('capture','-o',self.base/'kill-export.tbundle'),('import-settings',archive)]:
+            for _ in range(6):
+                self.reset_home(baseline)
+                output=self.base/'kill-export.tbundle'; output.unlink(missing_ok=True)
+                p=subprocess.Popen([str(format2.BIN),'--root',str(self.root),*map(str,command)],
+                    env=dict(os.environ,HOME=str(self.home),TAM_BUNDLE_SLOW_US='5000'),
+                    stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                time.sleep(rng.uniform(.001,.02))
+                if p.poll() is None:p.kill()
+                p.wait()
+                if command[0]=='capture' and len(command)>1 and output.exists():self.run_tb('verify',output)
+                else:self.tb(*command)
+                self.assertEqual((self.home/'.bashrc').read_text(),'portable')
+
+    def test_system_record_and_exact_transaction_agreement(self):
+        self.write('.bashrc','capture'); capture,_=self.capture()
+        self.tb('restore-settings',capture.name); self.tb('apply-settings')
+        sys=self.root/'var/lib/tamlinux/transaction'; original=sys.read_text()
+        mutations=[original+'uid 0\n',original.replace('kind product-only','kind unknown'),
+                   original.replace('capture -','capture foreign'),original.replace('uid 0','uid 1'),
+                   original.replace('from -','from ../wrong'), original.replace('to '+self.id(self.a),'to wrong'),
+                   original.replace('done 0','done -1')]
+        for text in mutations:
+            with self.subTest(system=text):
+                sys.write_text(text); self.tb('session-ready',code=4); self.tb('apply-settings',code=4)
+        sys.write_text(original)
+        self.tb('session-ready')
+        self.tb('install',self.b); self.tb('prepare-settings'); self.tb('apply')
+        user=self.state/'transaction'; original=user.read_text()
+        user.write_text(original.replace('from '+self.id(self.a),'from foreign'))
+        self.tb('apply-settings',code=4)
+        user.write_text(original); self.tb('apply-settings'); self.tb('session-ready')
+
+    def test_metadata_limits_fifo_and_stable_read_exclusion(self):
+        self.state.mkdir(parents=True,exist_ok=True)
+        listing=self.state/'settings.list'
+        listing.write_text('format 1\ncommon .config/a file\n')
+        self.write('.config/a file','spaces survive')
+        cap,_=self.capture(); self.tb('restore-settings',cap.name)
+        with listing.open('w') as f:f.truncate(16*1024*1024+1)
+        self.tb('capture',code=1)
+        listing.unlink(); os.mkfifo(listing); self.tb('capture',code=1); listing.unlink()
+        self.write('.bashrc','initial')
+        p=subprocess.Popen([str(format2.BIN),'--root',str(self.root),'capture'],
+            env=dict(os.environ,HOME=str(self.home),TAM_BUNDLE_READ_BARRIER='.bashrc'),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            for i in range(3):
+                # The test seam stops exactly between reading and rechecking.
+                deadline=time.monotonic()+5
+                while time.monotonic()<deadline:
+                    pid,status=os.waitpid(p.pid,os.WNOHANG|os.WUNTRACED)
+                    if pid:break
+                    time.sleep(.001)
+                self.assertTrue(pid and os.WIFSTOPPED(status))
+                temp=self.home/'.swap'; temp.write_text(f'changed {i}'); temp.replace(self.home/'.bashrc')
+                p.send_signal(signal.SIGCONT)
+            out,err=p.communicate(timeout=5); self.assertEqual(p.returncode,0,err)
+            self.assertIn('changed-during-read',out)
+            self.assertNotIn('changed 2',out+err)
+        finally:
+            if p.poll() is None:p.kill(); p.wait()
+
+    def rewrite_archive(self,source,dest,change):
+        with tarfile.open(source) as t:
+            entries=[(e,t.extractfile(e).read() if e.isfile() else None) for e in t]
+        change(entries)
+        with tarfile.open(dest,'w',format=tarfile.PAX_FORMAT) as t:
+            for e,data in entries:
+                if data is not None:e.size=len(data)
+                t.addfile(e,io.BytesIO(data) if data is not None else None)
+
+    def test_hostile_capture_archives_and_semantic_metadata(self):
+        self.write('.bashrc','safe'); source=self.base/'source.tbundle'; self.tb('capture','-o',source)
+        def metadata_change(header=None,files=None):
+            def change(entries):
+                data={e.name:b for e,b in entries}
+                h=data['capture/CAPTURE'].decode(); f=data['capture/FILES'].decode()
+                h=''.join(line+'\n' for line in h.splitlines() if not line.startswith('hash '))
+                if header:h=header(h)
+                if files:f=files(f)
+                h+='hash sha256:'+hashlib.sha256((h+f).encode()).hexdigest()+'\n'
+                for i,(e,b) in enumerate(entries):
+                    if e.name=='capture/CAPTURE':entries[i]=(e,h.encode())
+                    if e.name=='capture/FILES':entries[i]=(e,f.encode())
+            return change
+        cases=[metadata_change(header=lambda h:h+'user 0\n'),
+               metadata_change(header=lambda h:h.replace('user 0','user '+'9'*300)),
+               metadata_change(header=lambda h:h.replace('created ','created 999')),
+               metadata_change(header=lambda h:h.replace('complete yes','complete no')),
+               metadata_change(files=lambda f:f.replace(' edited ',' - ')),
+               metadata_change(files=lambda f:f.replace(' 0 .bashrc',' 999999999999999999999999 .bashrc')),
+               metadata_change(files=lambda f:f.replace(self.id(self.a),'foreign')),
+               metadata_change(files=lambda f:f.replace(' .bashrc',' ../../escape'))]
+        def extra(entries):
+            e=tarfile.TarInfo('capture/unlisted'); e.mode=0o600; entries.append((e,b'foreign'))
+        def link(entries):
+            for i,(e,b) in enumerate(entries):
+                if e.name=='capture/files/.bashrc':
+                    e.type=tarfile.SYMTYPE; e.linkname='/etc/passwd'; entries[i]=(e,None)
+        cases.extend([extra,link])
+        for i,change in enumerate(cases):
+            with self.subTest(case=i):
+                archive=self.base/f'hostile-{i}.tbundle'; self.rewrite_archive(source,archive,change)
+                self.run_tb('verify',archive,code=1); self.tb('import-settings',archive,code=1)
+                self.assertEqual((self.home/'.bashrc').read_text(),'safe')
 
 
 if __name__=='__main__':

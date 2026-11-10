@@ -60,10 +60,10 @@ void tb_note(const char *fmt, ...) {
 
 int tb_open_beneath(int dirfd, const char *rel) {
     struct open_how how = {
-        .flags = O_RDONLY | O_NOFOLLOW | O_CLOEXEC,
+        .flags = O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC,
         .resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS,
     };
     long fd = syscall(SYS_openat2, dirfd, rel, &how, sizeof how);
-    if (fd < 0 && errno == ENOSYS) return openat(dirfd, rel, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    /* A fallback openat would follow links in parent components. */
     return (int)fd;
 }

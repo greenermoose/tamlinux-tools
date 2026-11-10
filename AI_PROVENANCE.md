@@ -17,6 +17,7 @@ model, Fred's guiding prompts verbatim, the commits, and the decisions.
 
 | Date | Work | Tool and model | Evidence |
 | --- | --- | --- | --- |
+| 2026-11-10 | Complete 0.7 parser/transaction audit and expanded interruption proofs; formats await review | Codex 0.167.0; `gpt-6.1-sol` | [Session record](docs/ai/2026-11-10-tam-bundle-07-audit.md) |
 | 2026-11-10 | Approved 0.6 formats and recovery; tested 0.7 private settings draft | Codex 0.167.0; `gpt-6.1-sol` | [Session record](docs/ai/2026-11-10-tam-bundle-06-completion.md) |
 | 2026-11-10 | Recovered format-2 draft; correct process selection and isolate signal tests after a compositor termination | Codex 0.167.0; `gpt-6.1-sol` | [Session record](docs/ai/2026-11-10-tam-bundle-format2-safety.md) |
 | 2026-11-09 | `tam-bundle` 0.5.0–0.5.2: recipe targets, pinned files and native bring-up | Codex 0.167.0; `gpt-6.1-sol` | [Session record](docs/ai/2026-11-09-tam-bundle-recipes.md) |

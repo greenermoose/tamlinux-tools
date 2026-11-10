@@ -6,14 +6,62 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/random.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef TAM_BUNDLE_TESTING
+#include <signal.h>
+#endif
 
 #define SETTINGS_LIMIT (16U*1024U*1024U)
 #define SETTINGS_FILES 16384U
+#define METADATA_LIMIT (16U*1024U*1024U)
+/* Metadata must be a bounded, stable regular file, even for local retry
+ * records. Never allocate based on an archive's unbounded input length. */
+static char *metadata_fd(int fd,size_t *len,size_t limit) {
+    struct stat a,b;
+    char *data=NULL;
+    if(fstat(fd,&a) || !S_ISREG(a.st_mode) || a.st_size<0 || (uint64_t)a.st_size>limit)goto done;
+    size_t n=(size_t)a.st_size,off=0;
+    data=malloc(n+1);
+    if(!data)goto done;
+    while(off<n) {
+        ssize_t r=read(fd,data+off,n-off);
+        if(r<0 && errno==EINTR)continue;
+        if(r<=0)break;
+        off+=(size_t)r;
+    }
+    if(off!=n || fstat(fd,&b) || a.st_size!=b.st_size ||
+       a.st_ctim.tv_sec!=b.st_ctim.tv_sec || a.st_ctim.tv_nsec!=b.st_ctim.tv_nsec) {
+        free(data); data=NULL; goto done;
+    }
+    data[n]=0; *len=n;
+done:
+    if(!data)errno=EINVAL;
+    return data;
+}
+static char *metadata(int base,const char *path,size_t *len,size_t limit) {
+    int fd=openat(base,path,O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC);
+    if(fd<0)return NULL;
+    char *data=metadata_fd(fd,len,limit);
+    int saved=errno; close(fd); errno=saved; return data;
+}
+static bool number_valid(const char *s,unsigned long max) {
+    if(!*s || strspn(s,"0123456789")!=strlen(s))return false;
+    errno=0; unsigned long n=strtoul(s,NULL,10);
+    return !errno && n<=max;
+}
+static bool sid(const char *s) {
+    return *s && strlen(s)<=240 && tam_path_is_safe_rel(s) &&
+        strspn(s,"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._+@-")==strlen(s);
+}
+static bool spath(const char *s) {
+    return strlen(s)<4096 && tam_path_is_safe_rel(s) && !strchr(s,'\t') &&
+        s[0]!=' ' && s[strlen(s)-1]!=' ';
+}
 typedef struct {
     char *path, *mark;
     char *presence, *origin, *base, *reason;
@@ -72,12 +120,18 @@ static int sdir(int base,const char *path,bool create) {
     return out;
 }
 static int swrite(int base,const char *path,const void *data,size_t n,unsigned mode) {
+    if(n>METADATA_LIMIT || ((!strcmp(path,"CAPTURE") || !strcmp(path,"transaction")) && n>4096)) {
+        errno=EFBIG; return -1;
+    }
     char *leaf=NULL;
     int p=sparent(base,path,true,&leaf);
     if(p<0){free(leaf); return -1;}
     char *temp=NULL;
-    if(asprintf(&temp,".%s.tamlinux-new",leaf)<0)temp=NULL;
-    int fd=temp?openat(p,temp,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW|O_CLOEXEC,0600):-1;
+    unsigned char random[16]; char suffix[33];
+    if(getrandom(random,sizeof random,0)!=sizeof random){close(p); free(leaf); return -1;}
+    for(size_t i=0;i<16;i++)snprintf(suffix+i*2,3,"%02x",random[i]);
+    if(asprintf(&temp,".%s.%s",leaf,suffix)<0)temp=NULL;
+    int fd=temp?openat(p,temp,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600):-1;
     int r=fd<0?-1:0;
     for(size_t off=0;!r && off<n;) {
         ssize_t k=write(fd,(const char *)data+off,n-off);
@@ -142,11 +196,11 @@ static size_t secret_line(const char *data,size_t n) {
 /* 0 present, 1 absent, 2 excluded. Recheck the opened file and its path so
  * a concurrent atomic save cannot silently capture an obsolete inode. */
 static int sread(int base,const char *path,char **data,size_t *len,unsigned *mode,const char **reason) {
-    *data=NULL; *len=0;
+    *data=NULL; *len=0; *mode=0;
     if(secret_path(path)){*reason="secret-path"; return 2;}
     for(int attempt=0;attempt<3;attempt++) {
         int fd=tb_open_beneath(base,path);
-        if(fd<0){*reason="unreadable-or-link"; return errno==ENOENT?1:2;}
+        if(fd<0){if(errno==ENOENT)return 1; *reason="unreadable-or-link"; return 2;}
         struct stat a,b,c;
         if(fstat(fd,&a) || !S_ISREG(a.st_mode) || a.st_size<0 || (uint64_t)a.st_size>SETTINGS_LIMIT) {
             close(fd); *reason="type-or-size"; return 2;
@@ -160,6 +214,10 @@ static int sread(int base,const char *path,char **data,size_t *len,unsigned *mod
             if(k<=0)break;
             off+=(size_t)k;
         }
+#ifdef TAM_BUNDLE_TESTING
+        const char *barrier=getenv("TAM_BUNDLE_READ_BARRIER");
+        if(barrier && !strcmp(path,barrier))raise(SIGSTOP);
+#endif
         int check=tb_open_beneath(base,path);
         bool stable=off==size && !fstat(fd,&b) && check>=0 && !fstat(check,&c) &&
             a.st_dev==c.st_dev && a.st_ino==c.st_ino && a.st_size==b.st_size &&
@@ -179,7 +237,7 @@ static void sfree(settings *s) {
     free(s->v); memset(s,0,sizeof *s);
 }
 static setting *sadd(settings *s,const char *path,const char *mark) {
-    if(!tam_path_is_safe_rel(path))return NULL;
+    if(!spath(path))return NULL;
     for(size_t i=0;i<s->n;i++)if(!strcmp(s->v[i].path,path)) {
         free(s->v[i].mark); s->v[i].mark=strdup(mark); return &s->v[i];
     }
@@ -192,6 +250,9 @@ static setting *sadd(settings *s,const char *path,const char *mark) {
     return e->path && e->mark?e:NULL;
 }
 static int gather(int base,const char *path,const char *mark,settings *s) {
+    size_t depth=0;
+    for(const char *p=path;*p;p++)if(*p=='/')depth++;
+    if(depth>64 || !spath(path))return -1;
     if(secret_path(path))return sadd(s,path,mark)?0:-1;
     int fd=tb_open_beneath(base,path);
     if(fd<0)return errno==ENOENT?0:(sadd(s,path,mark)?0:-1);
@@ -226,13 +287,13 @@ static int listline(void *arg,size_t line,int fmt,char **f,size_t n) {
 }
 static int read_list(user_settings *u,int product) {
     size_t n=0;
-    char *text=tb_read_at(product,"SETTINGS",&n);
+    char *text=metadata(product,"SETTINGS",&n,METADATA_LIMIT);
     int defaults=tb_open_beneath(product,"defaults/home");
     list_reader r={u,defaults};
     int result=text?tam_rec_parse(text,n,2,1,listline,&r,NULL):-1;
     free(text);
     if(!result) {
-        text=tb_read_at(u->state,"settings.list",&n);
+        text=metadata(u->state,"settings.list",&n,METADATA_LIMIT);
         if(text){result=tam_rec_parse(text,n,2,1,listline,&r,NULL); free(text);}
         else if(errno!=ENOENT)result=-1;
     }
@@ -245,6 +306,10 @@ static void user_close(user_settings *u) {
     if(u->state>=0)close(u->state);
     if(u->product>=0)close(u->product);
     free(u->homepath); free(u->productpath); sfree(&u->files);
+}
+static int user_lock(user_settings *u) {
+    char *path=tam_path_join(u->homepath,".local/state/tamlinux/lock");
+    int fd=path?tam_fs_lock(path,5000):-1; free(path); return fd;
 }
 static int user_open(user_settings *u,const char *root) {
     memset(u,0,sizeof *u); u->home=u->state=u->product=-1;
@@ -274,7 +339,7 @@ static int user_open(user_settings *u,const char *root) {
     snprintf(u->productid,sizeof u->productid,"%s",b.id);
     tb_bundle_free(&b); tb_manifest_free(&m);
     char *hostpath=tam_path_join(root,"var/lib/tamlinux/host-id");
-    size_t n=0; char *host=hostpath?tb_read_at(AT_FDCWD,hostpath,&n):NULL; free(hostpath);
+    size_t n=0; char *host=hostpath?metadata(AT_FDCWD,hostpath,&n,128):NULL; free(hostpath);
     if(host && n && host[n-1]=='\n')host[--n]=0;
     bool ok=host && n==TB_HASH_LEN && !strncmp(host,"sha256:",7) && strspn(host+7,"0123456789abcdef")==64;
     if(ok)snprintf(u->host,sizeof u->host,"%s",host);
@@ -334,7 +399,7 @@ static int snapshot(user_settings *u,char id[256]) {
     clock_gettime(CLOCK_REALTIME,&now); gmtime_r(&now.tv_sec,&tm);
     strftime(date,sizeof date,"%Y%m%dT%H%M%SZ",&tm);
     if(gethostname(hostname,sizeof hostname))strcpy(hostname,"unknown");
-    hostname[sizeof hostname-1]=0;
+    hostname[100]=0;
     for(char *p=hostname;*p;p++)if(!isalnum((unsigned char)*p) && *p!='-' && *p!='.')*p='_';
     snprintf(user,sizeof user,"%lu",(unsigned long)getuid());
     tam_str_t header=tam_str_new("format 1\n");
@@ -430,11 +495,24 @@ static int filesline(void *arg,size_t line,int fmt,char **f,size_t n) {
     if(n!=9 || (strcmp(f[0],"common") && strcmp(f[0],"host")) ||
        (strcmp(f[1],"present") && strcmp(f[1],"absent") && strcmp(f[1],"excluded")) ||
        (strcmp(f[4],"default") && strcmp(f[4],"edited") && strcmp(f[4],"-")) ||
-       !tam_path_is_safe_rel(f[8]) || strlen(f[2])!=4 || strspn(f[2],"01234567")!=4 ||
-       !*f[7] || strspn(f[7],"0123456789")!=strlen(f[7]))return 1;
+       !spath(f[8]) || !sid(f[5]) || strlen(f[2])!=4 || strspn(f[2],"01234567")!=4 ||
+       !number_valid(f[7],SETTINGS_LIMIT+1))return 1;
     unsigned mode=(unsigned)strtoul(f[2],NULL,8);
     if(mode>0777 || (!strcmp(f[1],"present") && !shash_valid(f[3])) ||
        (strcmp(f[1],"excluded") && secret_path(f[8])))return 1;
+    bool present=!strcmp(f[1],"present"), absent=!strcmp(f[1],"absent");
+    if(present) {
+        if(!strcmp(f[4],"-") || strcmp(f[6],"-") || strcmp(f[7],"0"))return 1;
+    } else {
+        if(strcmp(f[3],"-") || strcmp(f[4],"-"))return 1;
+        if(absent && (mode || strcmp(f[6],"-") || strcmp(f[7],"0")))return 1;
+        if(!absent) {
+            const char *reasons[]={"secret-pattern","secret-path","unreadable-or-link","type-or-size","changed-during-read"};
+            bool known=false;
+            for(size_t i=0;i<5;i++)if(!strcmp(f[6],reasons[i]))known=true;
+            if(!known || (!strcmp(f[6],"secret-pattern")? !strtoul(f[7],NULL,10):strcmp(f[7],"0")))return 1;
+        }
+    }
     if(s->n && strcmp(s->v[s->n-1].path,f[8])>=0)return 1;
     setting *e=sadd(s,f[8],f[0]);
     if(!e)return 1;
@@ -446,10 +524,16 @@ static int filesline(void *arg,size_t line,int fmt,char **f,size_t n) {
 }
 static int capture_read(int fd,settings *s,capture_header *h) {
     size_t hn=0,fn=0;
-    char *header=tb_read_at(fd,"CAPTURE",&hn), *files=tb_read_at(fd,"FILES",&fn);
+    char *header=metadata(fd,"CAPTURE",&hn,4096), *files=metadata(fd,"FILES",&fn,METADATA_LIMIT);
     int r=-1;
     if(!header || !files || tam_rec_parse(header,hn,2,1,captureline,h,NULL) ||
        !h->user || !h->hostname || !h->host || !h->product || !h->created || !h->complete || !h->hash ||
+       !number_valid(h->user,UINT_MAX) || !*h->hostname || strlen(h->hostname)>100 ||
+       strspn(h->hostname,"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")!=strlen(h->hostname) ||
+       !sid(h->product) || !strcmp(h->product,"-") || strlen(h->created)!=26 ||
+       strspn(h->created,"0123456789")!=8 || h->created[8]!='T' ||
+       strspn(h->created+9,"0123456789")!=6 || h->created[15]!='Z' || h->created[16]!='.' ||
+       strspn(h->created+17,"0123456789")!=9 ||
        !shash_valid(h->host) || !shash_valid(h->hash) ||
        (strcmp(h->complete,"yes") && strcmp(h->complete,"no")) ||
        tam_rec_parse(files,fn,9,1,filesline,s,NULL))goto done;
@@ -467,8 +551,11 @@ static int capture_read(int fd,settings *s,capture_header *h) {
     body=tam_str_cat(body,files);
     char hash[TB_HASH_LEN+1]; shash(body,tam_str_len(body),hash); tam_str_free(body);
     if(strcmp(hash,h->hash))goto done;
+    bool complete=true;
     for(size_t i=0;i<s->n;i++) {
         setting *e=&s->v[i];
+        if(strcmp(e->base,h->product))goto done;
+        if(!strcmp(e->presence,"excluded"))complete=false;
         if(strcmp(e->presence,"present"))continue;
         char *path=tam_path_join("files",e->path),*data=NULL;
         size_t len=0; unsigned mode=0; const char *reason="-";
@@ -477,6 +564,7 @@ static int capture_read(int fd,settings *s,capture_header *h) {
         free(data);
         if(ok || strcmp(hash,e->hash))goto done;
     }
+    if(strcmp(h->complete,complete?"yes":"no"))goto done;
     r=0;
 done:
     free(header); free(files);
@@ -484,7 +572,8 @@ done:
     return r;
 }
 typedef struct {
-    char id[65], system[65], from[256], to[256], capture[256], automatic[256], state[16], kind[32];
+    char id[65], system[65], from[256], to[256], capture[256], automatic[256], state[16], kind[32], activation[TB_HASH_LEN+1];
+    char changes[TB_HASH_LEN+1];
     size_t done;
     unsigned fields;
 } settings_tx;
@@ -492,66 +581,88 @@ static int stxline(void *arg,size_t line,int fmt,char **f,size_t n) {
     (void)line; (void)fmt;
     settings_tx *t=arg;
     if(n!=2)return 1;
-    const char *keys[]={"id","from","to","capture","automatic","state","kind","done","system"};
-    char *slots[]={t->id,t->from,t->to,t->capture,t->automatic,t->state,t->kind,NULL,t->system};
-    size_t caps[]={sizeof t->id,sizeof t->from,sizeof t->to,sizeof t->capture,sizeof t->automatic,sizeof t->state,sizeof t->kind,0,sizeof t->system};
-    for(size_t i=0;i<9;i++)if(!strcmp(f[0],keys[i])) {
+    const char *keys[]={"id","from","to","capture","automatic","state","kind","done","system","activation","changes"};
+    char *slots[]={t->id,t->from,t->to,t->capture,t->automatic,t->state,t->kind,NULL,t->system,t->activation,t->changes};
+    size_t caps[]={sizeof t->id,sizeof t->from,sizeof t->to,sizeof t->capture,sizeof t->automatic,sizeof t->state,sizeof t->kind,0,sizeof t->system,sizeof t->activation,sizeof t->changes};
+    for(size_t i=0;i<11;i++)if(!strcmp(f[0],keys[i])) {
         if(t->fields&(1U<<i))return 1;
         t->fields|=1U<<i;
         if(i==7) {
-            if(!*f[1] || strspn(f[1],"0123456789")!=strlen(f[1]))return 1;
+            if(!number_valid(f[1],128))return 1;
             errno=0; t->done=strtoul(f[1],NULL,10); return errno!=0;
         }
-        if(strlen(f[1])>=caps[i] || !tam_path_is_safe_rel(f[1]) || strchr(f[1],'/'))return 1;
+        if(strlen(f[1])>=caps[i] || (i>=9? (strcmp(f[1],"-") && !shash_valid(f[1])):!sid(f[1])))return 1;
         strcpy(slots[i],f[1]); return 0;
     }
     return 1;
 }
 static int tx_read(int fd,settings_tx *t) {
     memset(t,0,sizeof *t);
-    size_t n; char *text=tb_read_at(fd,"transaction",&n);
+    size_t n; char *text=metadata(fd,"transaction",&n,4096);
     if(!text)return errno==ENOENT?0:-1;
     int r=tam_rec_parse(text,n,2,1,stxline,t,NULL); free(text);
-    if(r || t->fields!=511 || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
+    if(r || t->fields!=2047 || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
        strlen(t->system)!=32 || strspn(t->system,"0123456789abcdef")!=32 ||
        (strcmp(t->kind,"upgrade") && strcmp(t->kind,"restore") && strcmp(t->kind,"settings-only")) ||
        (strcmp(t->state,"ready") && strcmp(t->state,"staging") && strcmp(t->state,"applying") &&
         strcmp(t->state,"activating") && strcmp(t->state,"complete")))return -1;
+    bool only=!strcmp(t->kind,"settings-only"), upgrade=!strcmp(t->kind,"upgrade");
+    bool early=!strcmp(t->state,"ready") || !strcmp(t->state,"staging") || !strcmp(t->state,"applying");
+    if(!strcmp(t->to,"-") || (only?strcmp(t->from,t->to):(!strcmp(t->from,t->to) || strcmp(t->id,t->system))) ||
+       (upgrade?strcmp(t->capture,"-"):!strcmp(t->capture,"-")) ||
+       (early && (t->done || strcmp(t->activation,"-"))) ||
+       (!strcmp(t->state,"ready") && strcmp(t->automatic,"-")) ||
+       ((!strcmp(t->state,"applying") || !strcmp(t->state,"activating") || !strcmp(t->state,"complete")) && !strcmp(t->automatic,"-")) ||
+       ((!strcmp(t->state,"complete") || t->done) && !shash_valid(t->activation)))return -1;
+    bool planning=!strcmp(t->state,"ready") || !strcmp(t->state,"staging");
+    if(planning?strcmp(t->changes,"-"):!shash_valid(t->changes))return -1;
     return 1;
 }
 static int tx_write(int fd,settings_tx *t,const char *state) {
     snprintf(t->state,sizeof t->state,"%s",state);
     tam_str_t text=tam_str_new("format 1\n");
-    text=tam_str_cat_printf(text,"id %s\nsystem %s\nfrom %s\nto %s\ncapture %s\nautomatic %s\nkind %s\nstate %s\ndone %zu\n",
-        t->id,t->system,t->from,t->to,t->capture,t->automatic,t->kind,t->state,t->done);
+    text=tam_str_cat_printf(text,"id %s\nsystem %s\nfrom %s\nto %s\ncapture %s\nautomatic %s\nkind %s\nstate %s\ndone %zu\nactivation %s\nchanges %s\n",
+        t->id,t->system,t->from,t->to,t->capture,t->automatic,t->kind,t->state,t->done,t->activation,t->changes);
     int r=text?swrite(fd,"transaction",text,tam_str_len(text),0600):-1; tam_str_free(text);
     if(!r){char point[64]; snprintf(point,sizeof point,"settings-state-%s",state); tb_fault(point);}
     return r;
 }
-typedef struct {char id[65],from[256],to[256],state[16]; unsigned fields;} system_tx;
+typedef struct {char id[65],from[256],to[256],state[16]; unsigned fields; unsigned long uid;} system_tx;
 static int systemline(void *arg,size_t line,int fmt,char **f,size_t n) {
     (void)line; (void)fmt;
     system_tx *t=arg;
     if(n!=2)return 1;
-    const char *keys[]={"id","from","to","state"};
+    const char *keys[]={"id","from","to","state","capture","uid","kind","done"};
     char *slots[]={t->id,t->from,t->to,t->state};
     size_t caps[]={sizeof t->id,sizeof t->from,sizeof t->to,sizeof t->state};
-    for(size_t i=0;i<4;i++)if(!strcmp(f[0],keys[i])) {
-        if((t->fields&(1U<<i)) || strlen(f[1])>=caps[i])return 1;
-        strcpy(slots[i],f[1]); t->fields|=1U<<i; return 0;
+    for(size_t i=0;i<8;i++)if(!strcmp(f[0],keys[i])) {
+        if(t->fields&(1U<<i))return 1;
+        t->fields|=1U<<i;
+        if(i<4) {
+            if(strlen(f[1])>=caps[i] || !sid(f[1]))return 1;
+            strcpy(slots[i],f[1]); return 0;
+        }
+        if(i==4)return strcmp(f[1],"-")!=0;
+        if(i==6)return strcmp(f[1],"product-only")!=0;
+        if(!number_valid(f[1],i==5?UINT_MAX:ULONG_MAX))return 1;
+        if(i==5)t->uid=strtoul(f[1],NULL,10);
+        return 0;
     }
-    return strcmp(f[0],"capture") && strcmp(f[0],"uid") && strcmp(f[0],"kind") && strcmp(f[0],"done");
+    return 1;
 }
 static int system_read(const char *root,system_tx *t) {
     memset(t,0,sizeof *t);
     char *dir=tam_path_join(root,"var/lib/tamlinux");
     int fd=dir?open(dir,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC):-1; free(dir);
     if(fd<0)return -1;
-    size_t n=0; char *text=tb_read_at(fd,"transaction",&n);
-    if(!text && errno==ENOENT)text=tb_read_at(fd,"last-transaction",&n);
+    size_t n=0; char *text=metadata(fd,"transaction",&n,4096);
+    if(!text && errno==ENOENT)text=metadata(fd,"last-transaction",&n,4096);
     int r=text?tam_rec_parse(text,n,2,1,systemline,t,NULL):-1;
     free(text); close(fd);
-    if(r || t->fields!=15 || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32)return -1;
+    if(r || t->fields!=255 || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
+       !strcmp(t->to,"-") || !strcmp(t->from,t->to) ||
+       (strcmp(t->state,"ready") && strcmp(t->state,"staging") && strcmp(t->state,"applying") &&
+        strcmp(t->state,"activating") && strcmp(t->state,"complete")))return -1;
     return 0;
 }
 static int set_product(user_settings *u,const char *root,const char *id) {
@@ -571,17 +682,18 @@ static int settings_plan(user_settings *u,const char *root,const char *capture,b
     settings_tx t; int have=tx_read(u->state,&t);
     if(have<0 || (have && strcmp(t.state,"ready") && strcmp(t.state,"complete")))return TB_INTERRUPTED;
     if(capture && (!tam_path_is_safe_rel(capture) || strchr(capture,'/') || strlen(capture)>=sizeof t.capture))return TB_USAGE;
-    memset(&t,0,sizeof t); strcpy(t.capture,capture?capture:"-"); strcpy(t.automatic,"-");
+    memset(&t,0,sizeof t); strcpy(t.capture,capture?capture:"-"); strcpy(t.automatic,"-"); strcpy(t.activation,"-");
+    strcpy(t.changes,"-");
     if(only) {
         system_tx sys;
-        if(system_read(root,&sys) || strcmp(sys.state,"complete"))return TB_INTERRUPTED;
+        if(system_read(root,&sys) || strcmp(sys.state,"complete") || strcmp(sys.to,u->productid) || sys.uid!=getuid())return TB_INTERRUPTED;
         strcpy(t.system,sys.id);
         unsigned char random[16]; if(getrandom(random,sizeof random,0)!=sizeof random)return TB_FAIL;
         for(size_t i=0;i<16;i++)snprintf(t.id+i*2,3,"%02x",random[i]);
         strcpy(t.from,u->productid); strcpy(t.to,u->productid); strcpy(t.kind,"settings-only");
     } else {
         system_tx sys;
-        if(system_read(root,&sys) || strcmp(sys.state,"ready"))return TB_INTERRUPTED;
+        if(system_read(root,&sys) || strcmp(sys.state,"ready") || strcmp(sys.from,u->productid) || sys.uid!=getuid())return TB_INTERRUPTED;
         strcpy(t.id,sys.id); strcpy(t.system,sys.id); strcpy(t.from,sys.from); strcpy(t.to,sys.to); strcpy(t.kind,capture?"restore":"upgrade");
     }
     /* Planning reads lists and identities but never captures or stages user
@@ -609,12 +721,12 @@ static void changes_free(settings_changes *c) {
 }
 static int change_add(settings_changes *c,int stage,const setting *e,const char *path,const char *data,size_t n,unsigned mode,bool remove) {
     for(size_t i=0;i<c->n;i++)if(!strcmp(c->v[i].path,path))return -1;
-    if(secret_path(path) || !tam_path_is_safe_rel(path))return -1;
+    if(secret_path(path) || !spath(path) || c->n>=SETTINGS_FILES*2U)return -1;
     settings_change *v=realloc(c->v,(c->n+1)*sizeof *v);
     if(!v)return -1;
     c->v=v;
     settings_change *ch=&v[c->n++]; memset(ch,0,sizeof *ch);
-    ch->path=strdup(path); ch->mode=mode; ch->beforemode=e->mode; ch->remove=remove;
+    ch->path=strdup(path); ch->mode=remove?0:mode; ch->beforemode=e->mode; ch->remove=remove;
     ch->before=strdup(!strcmp(e->presence,"present")?e->hash:"-");
     char hash[TB_HASH_LEN+1]; if(remove)strcpy(hash,"-"); else shash(data,n,hash);
     ch->after=strdup(hash);
@@ -644,7 +756,9 @@ static int changesline(void *arg,size_t line,int fmt,char **f,size_t n) {
        strlen(f[2])!=4 || strspn(f[2],"01234567")!=4 || strtoul(f[2],NULL,8)>0777 ||
        (strcmp(f[3],"-") && !shash_valid(f[3])) ||
        (!strcmp(f[0],"write")?!shash_valid(f[4]):strcmp(f[4],"-")) ||
-       !tam_path_is_safe_rel(f[5]) || secret_path(f[5]))return 1;
+       !spath(f[5]) || secret_path(f[5]) || c->n>=SETTINGS_FILES*2U ||
+       (!strcmp(f[3],"-") && strcmp(f[2],"0000")) ||
+       (!strcmp(f[0],"remove") && (!strcmp(f[3],"-") || strcmp(f[1],"0000"))))return 1;
     for(size_t i=0;i<c->n;i++)if(!strcmp(c->v[i].path,f[5]))return 1;
     settings_change *v=realloc(c->v,(c->n+1)*sizeof *v); if(!v)return 1; c->v=v;
     settings_change *ch=&v[c->n++]; memset(ch,0,sizeof *ch);
@@ -760,6 +874,7 @@ static int compute_changes(user_settings *u,const char *root,settings_tx *t,int 
     }
     tam_str_t text=changes_text(changes);
     result=text?swrite(stage,"CHANGES",text,tam_str_len(text),0600):-1;
+    if(!result)shash(text,tam_str_len(text),t->changes);
     tam_str_free(text);
 done:
     if(capture>=0)close(capture);
@@ -843,7 +958,7 @@ static int userstepline(void *arg,size_t line,int fmt,char **f,size_t n) {
     user_steps *s=arg;
     if(n && strcmp(f[0],"user-step"))
         return strcmp(f[0],"allow") && strcmp(f[0],"services") && strcmp(f[0],"step");
-    if(n!=4 || !tb_valid_name(f[1]) || (strcmp(f[2],"required") && strcmp(f[2],"optional")) || !tam_path_is_safe_rel(f[3]))return 1;
+    if(n!=4 || !tb_valid_name(f[1]) || (strcmp(f[2],"required") && strcmp(f[2],"optional")) || !spath(f[3]) || s->n>=128)return 1;
     for(size_t i=0;i<s->n;i++)if(!strcmp(s->names[i],f[1]))return 1;
     char **names=realloc(s->names,(s->n+1)*sizeof *s->names);
     if(!names)return 1;
@@ -869,18 +984,33 @@ static int user_activate(user_settings *u,const char *root,settings_tx *t,const 
     user_steps steps={0}; size_t n=0;
     char *profile=tam_path_join(root,"usr/share/tamlinux/rootstock/profile");
     struct stat st;
-    int fd=profile?open(profile,O_RDONLY|O_NOFOLLOW|O_CLOEXEC):-1;
+    int fd=profile?open(profile,O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC):-1;
     int result=TB_AFTER_FAILED;
     bool trusted=fd>=0 && !fstat(fd,&st) && S_ISREG(st.st_mode) && !(st.st_mode&0022) &&
         (st.st_uid==0 || (strcmp(root,"/") && st.st_uid==geteuid()));
+    char *text=trusted?metadata_fd(fd,&n,METADATA_LIMIT):NULL; free(profile);
     if(fd>=0)close(fd);
-    char *text=trusted?tb_read_at(AT_FDCWD,profile,&n):NULL; free(profile);
-    int parsed=text?tam_rec_parse(text,n,4,1,userstepline,&steps,NULL):-1; free(text);
+    int parsed=text?tam_rec_parse(text,n,4,1,userstepline,&steps,NULL):-1;
+    free(text);
     bool reload=false;
     for(size_t i=0;i<steps.n;i++)if(!strcmp(steps.names[i],"user-units-reload") && steps.required[i])reload=true;
-    if(parsed || !reload || t->done>steps.n) {
+    if(parsed || !reload) {
         tb_err("a trusted required user-units-reload step is needed before settings complete"); goto done;
     }
+    tam_str_t plan=tam_str_new("format 1\n");
+    for(size_t i=0;i<steps.n && plan;i++) {
+        const char *f[]={steps.names[i],steps.required[i]?"required":"optional",steps.commands[i]};
+        plan=tam_rec_cat(plan,f,3);
+    }
+    if(!plan)goto done;
+    char hash[TB_HASH_LEN+1]; shash(plan,tam_str_len(plan),hash); tam_str_free(plan);
+    /* A count is meaningful only for this exact ordered activation plan.
+     * Idempotent actions restart from zero after a profile change. */
+    if(strcmp(t->activation,hash)) {
+        strcpy(t->activation,hash); t->done=0;
+        if(tx_write(u->state,t,"activating")){result=TB_INTERRUPTED; goto done;}
+    }
+    if(t->done>steps.n)goto done;
     for(size_t i=t->done;i<steps.n;i++) {
         char *command=tam_path_join(root,steps.commands[i]);
         const char *args[]={command,"apply",t->id,NULL};
@@ -896,16 +1026,22 @@ done:
     free(steps.names); free(steps.commands); free(steps.required);
     return result;
 }
+static bool agrees(const user_settings *u,const system_tx *sys,const settings_tx *t) {
+    return !strcmp(sys->state,"complete") && !strcmp(sys->id,t->system) &&
+        !strcmp(sys->to,t->to) && !strcmp(u->productid,t->to) && sys->uid==getuid() &&
+        (!strcmp(t->kind,"settings-only")? !strcmp(t->from,t->to):
+         (!strcmp(sys->id,t->id) && !strcmp(sys->from,t->from)));
+}
 static int settings_apply(user_settings *u,const char *root) {
     settings_tx t;
     int have=tx_read(u->state,&t);
     if(have<0)return TB_INTERRUPTED;
-    if(!have || !strcmp(t.state,"complete"))return TB_OK;
+    if(!have)return TB_INTERRUPTED;
     system_tx sys;
-    if(system_read(root,&sys) || strcmp(sys.state,"complete") || strcmp(sys.id,t.system) || strcmp(u->productid,t.to) ||
-       (strcmp(t.kind,"settings-only") && strcmp(sys.id,t.id))) {
+    if(system_read(root,&sys) || !agrees(u,&sys,&t)) {
         tb_err("system and settings transaction do not agree; session remains blocked"); return TB_INTERRUPTED;
     }
+    if(!strcmp(t.state,"complete"))return TB_OK;
     char *path=tam_path_join("staging",t.id);
     if(!path)return TB_FAIL;
     settings_changes changes={0}; int result=TB_INTERRUPTED;
@@ -925,8 +1061,10 @@ static int settings_apply(user_settings *u,const char *root) {
     int stage=sdir(u->state,path,false); free(path);
     if(stage<0)goto done;
     if(!changes.n) {
-        size_t n=0; char *text=tb_read_at(stage,"CHANGES",&n);
-        int r=text?tam_rec_parse(text,n,6,1,changesline,&changes,NULL):-1; free(text);
+        size_t n=0; char *text=metadata(stage,"CHANGES",&n,METADATA_LIMIT);
+        char hash[TB_HASH_LEN+1]="";
+        if(text)shash(text,n,hash);
+        int r=text && !strcmp(hash,t.changes)?tam_rec_parse(text,n,6,1,changesline,&changes,NULL):-1; free(text);
         if(r){close(stage); goto done;}
     }
     if(!strcmp(t.state,"applying")) {
@@ -950,9 +1088,7 @@ int tb_settings_main(const char *root,const char *command,const char *arg) {
     else if(!strcmp(command,"apply-settings"))result=settings_apply(&u,root);
     else if(!strcmp(command,"session-ready")) {
         settings_tx t; system_tx sys; int have=tx_read(u.state,&t);
-        result=have>0 && !strcmp(t.state,"complete") && !system_read(root,&sys) && !strcmp(sys.state,"complete") &&
-            !strcmp(u.productid,t.to) && !strcmp(sys.id,t.system) &&
-            (!strcmp(t.kind,"settings-only") || !strcmp(sys.id,t.id))?TB_OK:TB_INTERRUPTED;
+        result=have>0 && !strcmp(t.state,"complete") && !system_read(root,&sys) && agrees(&u,&sys,&t)?TB_OK:TB_INTERRUPTED;
     }
     tam_fs_unlock(lock); user_close(&u); return result;
 }
@@ -1001,6 +1137,7 @@ static int product_copy(int source,const char *src,int dest,const char *dst,unsi
     int out=p<0?-1:openat(p,leaf,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
     int r=in<0 || out<0?-1:tam_fs_clone_or_copy(in,out,NULL);
     if(!r && (fchmod(out,mode) || fsync(out)))r=-1;
+    if(!r)tb_fault("settings-copy-file-sync");
     if(!r)r=ssync(p);
     if(in>=0)close(in);
     if(out>=0)close(out);
@@ -1140,8 +1277,10 @@ int tb_settings_export(const char *root,const char *output,bool save_edits) {
     if(!tb_settings_private_output(root,output)){tb_err("workstation bundles cannot be written under public product state"); return TB_FAIL;}
     user_settings u; int result=TB_FAIL;
     if(user_open(&u,root)){user_close(&u); return TB_FAIL;}
-    char temp[]="/tmp/tam-bundle-export-XXXXXX";
-    if(!mkdtemp(temp)){user_close(&u); return TB_FAIL;}
+    int lock=user_lock(&u);
+    if(lock<0){user_close(&u); return TB_FAIL;}
+    char *temp=tam_path_join(u.homepath,".local/state/tamlinux/.export-XXXXXX");
+    if(!temp || !mkdtemp(temp)){free(temp); tam_fs_unlock(lock); user_close(&u); return TB_FAIL;}
     int dest=open(temp,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
     char id[256];
     if(dest<0 || export_product(&u,root,dest,temp,save_edits) || snapshot(&u,id) || copy_capture(&u,id,dest) || tb_v2_verify(temp))goto done;
@@ -1149,13 +1288,15 @@ int tb_settings_export(const char *root,const char *output,bool save_edits) {
     tb_note("private workstation bundle: %s; contains personal settings",output); result=TB_OK;
 done:
     if(dest>=0)close(dest);
-    tb_remove_at(AT_FDCWD,"/",temp+1); user_close(&u); return result;
+    tb_remove_at(AT_FDCWD,"/",temp+1); free(temp); tam_fs_unlock(lock); user_close(&u); return result;
 }
 int tb_settings_import(const char *root,const char *archive) {
     user_settings u; int result=TB_FAIL;
     if(user_open(&u,root)){user_close(&u); return TB_FAIL;}
-    char temp[]="/tmp/tam-bundle-settings-import-XXXXXX";
-    if(!mkdtemp(temp)){user_close(&u); return TB_FAIL;}
+    int lock=user_lock(&u);
+    if(lock<0){user_close(&u); return TB_FAIL;}
+    char *temp=tam_path_join(u.homepath,".local/state/tamlinux/.import-XXXXXX");
+    if(!temp || !mkdtemp(temp)){free(temp); tam_fs_unlock(lock); user_close(&u); return TB_FAIL;}
     settings s={0}; capture_header h={0}; tb_manifest_t m={0}; int cap=-1;
     char *capture=tam_path_join(temp,"capture");
     if(tb_archive_unpack(archive,temp) || tb_v2_verify(temp) || !capture)goto done;
@@ -1195,7 +1336,7 @@ int tb_settings_import(const char *root,const char *archive) {
 done:
     if(cap>=0)close(cap);
     free(capture); sfree(&s); capture_free(&h); tb_manifest_free(&m);
-    tb_remove_at(AT_FDCWD,"/",temp+1); user_close(&u); return result;
+    tb_remove_at(AT_FDCWD,"/",temp+1); free(temp); tam_fs_unlock(lock); user_close(&u); return result;
 }
 int tb_settings_diff(const char *root,const char *path) {
     if(!tam_path_is_safe_rel(path) || secret_path(path))return TB_USAGE;

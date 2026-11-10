@@ -9,6 +9,7 @@ records carry no session identifiers or transcript paths.
 
 | Date | Topic | Primary tool | Model | Session document |
 | :-- | :-- | :-- | :-- | :-- |
+| 2026-11-10 | 0.7 settings audit, bounded formats and interruption proofs | Codex 0.167.0 | `gpt-6.1-sol` | [Record](2026-11-10-tam-bundle-07-audit.md) |
 | 2026-11-10 | Approve 0.6 formats; implement and test a 0.7 settings draft | Codex 0.167.0 | `gpt-6.1-sol` | [Record](2026-11-10-tam-bundle-06-completion.md) |
 | 2026-11-10 | Format-2 draft and process-test containment | Codex 0.167.0 | `gpt-6.1-sol` | [Record](2026-11-10-tam-bundle-format2-safety.md) |
 | 2026-11-10 | Revised `tam-bundle` design | Claude Code 2.1.322 | `claude-opus-5-5` | [Record](2026-11-10-tam-bundle-redesign.md) |

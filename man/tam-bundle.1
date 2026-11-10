@@ -146,6 +146,9 @@ With \-o, export a mode-0600 workstation archive containing product and capture.
 Edited product files require \-\-save-edits and produce a marked derived
 bundle with its own identity. Workstation archives are private and cannot
 be written under public product state.
+Export publishes only a complete, synced archive and refuses to replace
+an existing output. After interruption, verify a published output before
+reusing it; otherwise repeat capture with the intended output name.
 .TP
 .BI import-settings " file"
 Verify a transferred workstation archive and retain its capture privately.
@@ -171,6 +174,9 @@ Only explicitly absent files are removed; excluded and unlisted paths
 remain untouched. Upgrades retain edits and put changed defaults beside
 them as .tamlinux-new files. A required user activation failure leaves the
 transaction activating and returns exit 3; retry completes forward.
+Retry verifies the exact saved change plan. Activation progress is bound
+to the ordered user action plan; a changed profile restarts those actions
+at zero. User actions must be safe to repeat.
 .TP
 .B session-ready
 Require complete, agreeing system and user transactions. A settings-only
