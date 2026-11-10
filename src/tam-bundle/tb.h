@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-#define TB_VERSION "0.7.0"
+#define TB_VERSION "0.8.0"
 #define TB_FORMAT 2               /* newest record format this program reads */
 #define TB_DEFAULT_SLOT "/usr/lib/tamlinux"
 #define TB_SYSTEM_STATE "/var/lib/tam-bundle"
@@ -48,6 +48,7 @@ typedef struct {
 
 typedef struct {
     int format;
+    char *buildenv;
     char **targets; size_t ntargets;
     char *derived;
     char **edits; size_t nedits;
@@ -221,6 +222,7 @@ bool tb_test_pkexec(void);
 
 typedef struct {
     int format;
+    const char *buildenv;
     const char *derived;
     const char *const *edits; size_t nedits;
     const char *const *targets; size_t ntargets;
@@ -289,6 +291,7 @@ typedef struct {
     char **deps;  size_t ndeps;   /* after-build components */
     char **targets; size_t ntargets; /* make-targets; empty means default */
     char **installs; size_t ninstalls; /* install-targets; default install */
+    char **build_needs; size_t nbuild_needs; /* native package names */
 } tb_recipe_t;
 
 typedef struct {
@@ -316,6 +319,7 @@ typedef struct {
     const char *repos;   /* directory of local clones tried before the URL */
     const char *prefix;  /* the live tree the bundle is built for */
     const char *built;   /* NULL: now */
+    bool verify;
 } tb_build_opts_t;
 
 int  tb_build(const tb_build_opts_t *o);
@@ -354,6 +358,7 @@ void tb_fault_file(size_t index);
 /* ---- Helpers (util.c) -------------------------------------------------- */
 
 char *tb_read_at(int dirfd, const char *rel, size_t *len); /* NUL-terminated */
+char *tb_read_limit(int dirfd,const char *rel,size_t *len,size_t limit);
 /* Open a file for reading strictly beneath dirfd: no symbolic link in any
  * component (openat2 RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS). */
 int   tb_open_beneath(int dirfd, const char *rel);
@@ -380,4 +385,22 @@ int tb_settings_export(const char *root, const char *output, bool save_edits);
 int tb_settings_import(const char *root, const char *archive);
 bool tb_settings_private_output(const char *root, const char *output);
 int tb_settings_diff(const char *root, const char *path);
+
+/* Arch native database snapshot: bounded read-only pacman queries. */
+typedef struct { char *path,*package; } tb_native_file;
+typedef struct {
+    char *root,*versions;
+    tb_native_file *files; size_t nfiles;
+} tb_native_t;
+int tb_native_read(const char *root,bool files,tb_native_t *n);
+void tb_native_free(tb_native_t *n);
+const char *tb_native_owner(const tb_native_t *n,const char *path);
+char *tb_native_version(const tb_native_t *n,const char *package);
+int tb_native_conflicts(const char *root,const tb_manifest_t *a,const tb_manifest_t *b);
+bool tb_need_valid(const char *kind,const char *target,const char *rest);
+int tb_contract_check(const char *root,const char *product,const tb_bundle_t *b);
+int tb_link_check(const char *root,const char *product,const tb_bundle_t *b,bool declarations);
+int tb_elf_probe(const char *root,const char *product,const tb_bundle_t *b,const char *path);
+int tb_runtime_open(int root,const char *absolute);
+int tb_version_compare(const char *actual,const char *required);
 #endif

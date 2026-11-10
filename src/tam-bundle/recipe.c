@@ -30,7 +30,7 @@
 #include <unistd.h>
 
 /* Set by tam-bundle itself; a recipe may not set them. */
-static const char *const reserved_vars[] = {"PREFIX", "DESTDIR", "SOURCE_DATE_EPOCH", NULL};
+static const char *const reserved_vars[] = {"PREFIX", "DESTDIR", "SOURCE_DATE_EPOCH", "PATH", "SHELL", NULL};
 
 static int bad(const char *what, size_t line, const char *why) {
     tb_err("%s line %zu: %s", what, line, why);
@@ -164,6 +164,13 @@ static int recipe_line(void *user, size_t line, int format, char **f, size_t n) 
         return 0;
     }
     if (strcmp(k, "make-vars") == 0) return each_token(v, rp, line, true);
+    if(!strcmp(k,"build-needs")) {
+        char pkg[128],op[8],version[80],extra;
+        int n=sscanf(v,"%127s %7s %79s %c",pkg,op,version,&extra);
+        if((n!=1 && (n!=3 || strcmp(op,">="))) || !tb_valid_name(pkg) || rp->rc->nbuild_needs>=64)
+            return bad(rp->what,line,"build-needs takes a native package name and optional >= version");
+        return push(&rp->rc->build_needs,&rp->rc->nbuild_needs,v)?0:1;
+    }
     if (strcmp(k, "after-build") == 0) return each_token(v, rp, line, false);
     if (strcmp(k, "make-targets") == 0 || strcmp(k, "install-targets") == 0) {
         bool install = strcmp(k, "install-targets") == 0;
@@ -188,6 +195,7 @@ static void recipe_free(tb_recipe_t *rc) {
     free_list(rc->deps, rc->ndeps);
     free_list(rc->targets, rc->ntargets);
     free_list(rc->installs, rc->ninstalls);
+    free_list(rc->build_needs,rc->nbuild_needs);
     memset(rc, 0, sizeof *rc);
 }
 

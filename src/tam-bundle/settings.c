@@ -1229,7 +1229,7 @@ static int export_product(user_settings *u,const char *root,int dest,const char 
             if(asprintf(&line,"%s %s %s",b.needs[i].kind,b.needs[i].target,b.needs[i].pkgs)<0)line=NULL;
             needs[i]=line;
         }
-        tb_seal_t options={.format=2,.derived=b.id,.edits=edits,.nedits=count,
+        tb_seal_t options={.format=2,.buildenv=b.buildenv,.derived=b.id,.edits=edits,.nedits=count,
             .name=b.name,.version=b.version,.host=b.host,.targets=(const char *const *)b.targets,.ntargets=b.ntargets,
             .sources=(const char *const *)b.sources,.nsources=b.nsources,.tools=(const char *const *)b.tools,.ntools=b.ntools,
             .needs=needs,.nneeds=b.nneeds,.after=(const char *const *)b.after,.nafter=b.nafter};

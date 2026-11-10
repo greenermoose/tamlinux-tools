@@ -61,7 +61,7 @@ bin/tam-file-select: src/tam-file-select.c bin/.config | bin libtam-check
 	$(CC) $(CFLAGS) $(INCLUDES) $< $(LIBS) -o $@
 
 bin/tam-bundle: $(BUNDLE_SRCS) $(BUNDLE_HDRS) bin/.config | bin core-check
-	$(CC) $(CFLAGS) $(CORE_CFLAGS) $(BUNDLE_SRCS) $(CORE_LIBS) -o $@
+	$(CC) $(CFLAGS) -static $(CORE_CFLAGS) $(BUNDLE_SRCS) $(CORE_LIBS) -o $@
 
 # The test build acts on fault points ($$TAM_BUNDLE_FAULT) and skips
 # post-install steps; it is never installed.
@@ -95,9 +95,12 @@ test: all bin/tam-bundle-test bin/tam-bundle-busy-test
 	@tests/run_tests.sh
 	@tests/tam-bundle/run.sh
 	@tests/tam-bundle/build.sh
+	@python3 -B tests/tam-bundle/build_environment.py
+	@python3 -B tests/tam-bundle/build_faults.py
 	@python3 -B tests/tam-bundle/namespace.py
 	@python3 -B tests/tam-bundle/format2.py
 	@python3 -B tests/tam-bundle/settings.py
+	@python3 -B tests/tam-bundle/runtime.py
 	@tests/man.sh
 	@if command -v xmllint >/dev/null; then \
 		sed 's|@BINDIR@|/usr/bin|g' data/org.tamlinux.bundle.policy.in | xmllint --noout - \

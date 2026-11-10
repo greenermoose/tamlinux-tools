@@ -28,6 +28,9 @@ class ProductTransactions(unittest.TestCase):
         p = self.root / 'usr/share/tamlinux/rootstock'
         p.mkdir(parents=True)
         (p / 'profile').write_text('format 1\nallow usr/bin\nallow usr/share/man\n')
+        (p / 'id').write_text('arch-systemd\n')
+        database=self.root/'var/lib/pacman/local'; database.mkdir(parents=True)
+        (database/'ALPM_DB_VERSION').write_text('9\n')
         self.a = self.bundle('A')
         self.b = self.bundle('B')
 

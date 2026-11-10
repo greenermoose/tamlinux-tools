@@ -343,17 +343,26 @@ Hash every file in a bundle, kept tree or live tree and compare it with
 then report extra, missing and edited entries.
 .TP
 .BI needs " dir"
-Report the bundle's native needs that are missing, each with the
-distribution packages that provide it.
-A need is checked by the presence of a command on
+Report unmet native requirements with the recorded install hints.
+Format 1 retains the presence check for a command on
 .B PATH
-or of a file, never by asking the package manager.
+or a file. Format 2 first checks target architecture/CPU, libc loader and
+rootstock profile. Its native package versions come from read-only Arch
+pacman queries. Minimum versions are required unless the present file has
+no native owner (reported as version unknown). Exact requirements hash
+the file. QML module exports, isolated Python imports and non-executing
+ELF dependency inspection provide the declared probes. Python imports
+must be checked on the running rootstock, not an offline foreign root.
+No install hint is executed.
 .TP
 .B status
 Show the slot, its state directory, the live bundle, the previous bundle,
 every kept tree with the reason it is protected, an interrupted switch if
 there is one, the last log line, and the last result of session steps left
 for each user.
+The format-2 interface also reports runtime compatibility of every retained
+product, including recovery versions. An unmet retained contract is a
+failure; an outstanding transaction remains the stronger session barrier.
 .TP
 .B check
 Compare the live tree with its
@@ -716,6 +725,10 @@ or
 .BI @ component @
 names a build-only component's prefix), and
 .BI after\-build " component ..."\fR.
+.B build\-needs
+lists a native build package, optionally followed by >= and a minimum
+version. Exact versions of these packages and the fixed toolchain base
+are recorded in recipe/BUILDENV and hashed into the cache key and BUNDLE.
 .B make\-targets
 lists targets for the first make (default: the Makefile's default target);
 .B install\-targets
@@ -728,6 +741,13 @@ A recipe may not set
 .B DESTDIR
 or
 .BR SOURCE_DATE_EPOCH .
+PATH and SHELL are also reserved. Builds use PATH=/usr/bin and a new
+network namespace. Sources are fetched before any build starts.
+.TP
+.B \-\-verify
+Fully hash cached build outputs before reuse. Ordinary cache checks use
+the saved output manifest and unchanged file stats; damaged or mismatching
+entries rebuild. This flag does not change the resulting bundle identity.
 .TP
 .IB recipes /bundle
 The bundle-wide part of

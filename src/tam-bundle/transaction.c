@@ -385,11 +385,9 @@ static int mountcheck(context *c,const tb_manifest_t *m) {
     }
     return 0;
 }
-/* Recheck uses the old manifest as the product record. Native package queries
- * and runtime probes are deliberately deferred to 0.8. Existing foreign files
- * are already refused, and every retained rollback copy is hashed here. */
+/* Recheck native ownership even for database-listed files absent on disk. */
 static int secure(context *c,const tb_manifest_t *newm,const tb_manifest_t *oldm) {
-    if(mountcheck(c,newm) || mountcheck(c,oldm))return -1;
+    if(mountcheck(c,newm) || mountcheck(c,oldm) || tb_native_conflicts(c->root,newm,oldm))return -1;
     for(size_t i=0;i<newm->n;i++) {
         const tb_entry_t *e=&newm->v[i];
     if(strncmp(e->path,"placed/",7))continue;
@@ -551,6 +549,7 @@ static int prepare(context *c,const char *source) {
     tb_manifest_t m={0},oldm={0};
     int r=TB_FAIL;
     if(tb_tree_read(AT_FDCWD,source,&b,&m) || b.format!=2 || tb_v2_verify(source))goto done;
+    if(tb_contract_check(c->root,source,&b))goto done;
     if(have && cancel(c))goto done;
     memset(&c->tx,0,sizeof c->tx);
     if(current(c,c->tx.from))goto done;
@@ -659,6 +658,10 @@ static int apply(context *c,bool yes) {
     int r=TB_INTERRUPTED;
     if(load(c,c->tx.to,&b,&m))goto done;
     if(strcmp(c->tx.from,"-") && load(c,c->tx.from,&oldb,&oldm))goto done;
+    char *versions=tam_path_join(c->root,"usr/lib/tamlinux/version");
+    char *product=versions?tam_path_join(versions,c->tx.to):NULL; free(versions);
+    int compatible=product?tb_contract_check(c->root,product,&b):-1; free(product);
+    if(compatible || tb_native_conflicts(c->root,&m,&oldm))goto done;
     if(!strcmp(c->tx.state,"ready")) {
         bool stopped=false;
         if(c->services){if(command(c,c->services,"stop")){command(c,c->services,"restart-old");
@@ -758,6 +761,24 @@ done:
     tb_manifest_free(&oldm);
     return r;
 }
+static int retained_contracts(context *c) {
+    int fd=directory(c->slot,"version",false);
+    if(fd<0)return errno==ENOENT?0:-1;
+    DIR *dir=fdopendir(fd);
+    if(!dir){close(fd); return -1;}
+    struct dirent *de; int result=0;
+    while((de=readdir(dir))) {
+        if(!identity(de->d_name) || de->d_name[0]=='.')continue;
+        tb_bundle_t b={0}; tb_manifest_t m={0};
+        char *versions=tam_path_join(c->root,"usr/lib/tamlinux/version");
+        char *path=versions?tam_path_join(versions,de->d_name):NULL; free(versions);
+        int r=!path || load(c,de->d_name,&b,&m) || tb_contract_check(c->root,path,&b);
+        printf("runtime: %s %s\n",de->d_name,r?"incompatible":"compatible");
+        if(r)result=-1;
+        free(path); tb_bundle_free(&b); tb_manifest_free(&m);
+    }
+    closedir(dir); return result;
+}
 int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if_pending,bool yes) {
     (void)if_pending;
     context c={.root=root,.rootfd=-1,.slot=-1,.state=-1,.lock=-1};
@@ -781,6 +802,7 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
         if(print_status(&c,cur))goto done;
         if(have)printf("transaction: %s\nstate: %s\nfrom: %s\nto: %s\ncapture: -\n",c.tx.id,c.tx.state,c.tx.from,c.tx.to);
         r=have && strcmp(c.tx.state,"complete")?TB_INTERRUPTED:TB_OK;
+        if(retained_contracts(&c) && r==TB_OK)r=TB_FAIL;
         if(!strcmp(cmd,"check") && strcmp(cur,"-")) {
             tb_bundle_t b={0};
     tb_manifest_t m={0};

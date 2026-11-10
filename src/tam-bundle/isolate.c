@@ -43,8 +43,8 @@ int tb_isolate(const tb_bind_t *binds, size_t n, const char **why) {
     uid_t uid = getuid();
     gid_t gid = getgid();
     char map[64];
-    *why = "unshare(CLONE_NEWUSER | CLONE_NEWNS) (are unprivileged user namespaces turned off?)";
-    if (unshare(CLONE_NEWUSER | CLONE_NEWNS) != 0) return -1;
+    *why = "unshare(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWNET) (are unprivileged namespaces turned off?)";
+    if (unshare(CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWNET) != 0) return -1;
     *why = "writing the user and group maps";
     if (write_file("/proc/self/setgroups", "deny") != 0) return -1;
     snprintf(map, sizeof map, "%u %u 1\n", (unsigned)uid, (unsigned)uid);

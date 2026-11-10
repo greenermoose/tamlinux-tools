@@ -17,10 +17,129 @@
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
   switching](../../upstream/2026-11-09-file-bundles-and-atomic-switch.md).
 
+## 0.8 implementation checkpoint
+
+The build-tree tool reports 0.8.0; it is not installed. Native ownership,
+runtime contracts/probes, offline builds, recorded build environments,
+checked caches and the fully static production executable are implemented.
+The earlier 0.6 and 0.7 formats remain approved. This checkpoint does not
+approve a candidate, workstation installation or Nix retirement.
+
+### Concrete interfaces
+
+- Native ownership uses bounded, read-only Arch `pacman -Q` and `-Ql`
+  queries with an explicit root/database and no caller configuration.
+  Database-listed placed files conflict even when absent on disk. Both new
+  and replaced Tamlinux paths are checked. Missing, changing or locked
+  databases refuse; `/usr/local` and unrelated packages remain untouched.
+- `needs` honors `--root` for format 2. Architecture/CPU baseline, glibc
+  loader and `target profile` checks precede dependency checks. The trusted
+  profile identity is a single line in
+  `/usr/share/tamlinux/rootstock/id`, such as `arch-systemd`.
+- `needs file /path [>= version|exact sha256:hash] [arch=package ...]`
+  checks native ownership/version or exact bytes. Present files with no
+  native owner report **version unknown**, as decided. `needs tam-bundle
+  >= version` checks the tool version. Legacy `command name` remains an
+  alias for `/usr/bin/name` in format 2; format 1 keeps its original PATH
+  presence check and simple requirement syntax.
+- `needs qml Module.Name major.minor` reads the standard Qt 6 `qmldir`
+  and literal module exports in `plugins.qmltypes`. Comments, unrelated
+  numbers and unversioned exports cannot establish a requested minimum.
+  `needs python module.name` uses the rootstock's `python3 -I` import
+  probe. Python imports require the running rootstock; an offline foreign
+  root is refused instead of borrowing host imports. Temporary-root tests
+  use explicit isolated fixture executables.
+- `needs elf usr/bin/program` inspects ELF64 little-endian x86_64 files,
+  their interpreter and recursive dependencies without executing them.
+  The build scans all payload ELF files and shebangs, including `env`
+  interpreters, and refuses undeclared external dependencies. Product
+  interpreters/private libraries need no external requirement. Rootstock
+  defaults and literal absolute or `$ORIGIN` search paths are supported;
+  unsupported expansion/search assumptions refuse. This is the first
+  rootstock's implementation, not a portable ELF loader.
+- Prepare and every apply/retry check runtime compatibility and native
+  ownership before file mutation. `status`/`check` also report every
+  retained product's runtime compatibility, so a broken retained recovery
+  version is visible before it is needed. Login integration and native
+  package-change hooks remain tam-nut work.
+
+The native query interface follows the
+[pacman query documentation](https://man.archlinux.org/man/pacman.8.en).
+ELF inspection follows the file's `PT_INTERP`, `PT_DYNAMIC` and `DT_NEEDED`
+records described in the [ELF ABI](https://refspecs.linuxfoundation.org/elf/gabi4%2B/ch5.dynamic.html).
+
+### Build environment and cache records
+
+Each component recipe accepts `build-needs package [>= version]`, up to
+64 declared native packages. The fixed toolchain base is gcc, binutils,
+glibc, linux-api-headers, make and pkgconf. The native versions of just
+these selected packages enter that component's input key; unrelated
+packages do not. The selected versions are rechecked before recording a
+finished cache entry and before bundle publication.
+
+The combined record is shipped as `recipe/BUILDENV` by the existing
+format-1 builder; the format-2 recipes will put it under `tree/recipe/`:
+
+```text
+format 1
+component app
+package binutils 2.46-1
+package gcc 16.2.1-1
+package glibc 2.43-1
+package linux-api-headers 7.0-1
+package make 4.4.1-2
+package pkgconf 2.5.1-1
+```
+
+Package rows are sorted and deduplicated per component. `BUNDLE` gains
+`buildenv sha256:<64 hex>`, covering the exact combined record. A derived
+product export preserves its build-environment identity.
+
+Each component cache directory retains `out.MANIFEST` and `out.stats`.
+Its last-written `done` stamp is:
+
+```text
+format 1
+key <64 hex input key>
+hash sha256:<64 hex of out.MANIFEST bytes>
+```
+
+Cache hits check the stamp, manifest hash and actual output tree. Ordinary
+checks reuse unchanged file stats; `build --verify` fully hashes files.
+Invalid, missing or edited cache records/outputs rebuild. The caller's
+PATH is excluded: tool paths are absolute, build PATH is `/usr/bin`, PATH
+and SHELL recipe overrides are refused, and every make runs in a private
+network namespace. All source fetching precedes the first make. The
+production tool has neither an ELF interpreter nor a dynamic section;
+sanitizer test binaries remain separate and are never installed.
+
+### Verification boundary
+
+Temporary fixtures verify native ownership, target/version/probe refusal,
+retained compatibility, ELF non-execution and static linking. The build
+proofs cover selected versus unrelated native versions, corrupt caches,
+fixed PATH/network namespaces, seven cache/output publication boundaries
+and randomized kills. Product and settings recovery suites retain their
+mandatory private PID namespace and private `/proc`, without a host
+fallback. `make test` passed all 25 product, 21 settings, 10 runtime and
+two new build proof tests, plus the existing compatibility and manual
+checks. The [session record](../ai/2026-11-10-tam-bundle-07-audit.md#08-tool-checkpoint)
+gives the exact run results.
+
+These are automated tool proofs. Native package updates are trusted
+rootstock operations, not an adversarial root writer. This is not a
+filesystem power-cut proof, real QML/Python/UX acceptance, an installed
+second workstation, or a demonstrated login/console/Nix recovery path.
+The format-2 build recipes, real settings list and Home Manager link
+migration, tam nut, delivery/candidate integration and hardware proofs
+remain the next migration steps. Nix/Home Manager delivery and rollback
+and the bootstrap pin remain unchanged.
+
 ## 0.7 development checkpoint
 
-**Implemented and audited; concrete formats await review and acceptance.** Development continues from the
-approved 0.6 formats below. The build-tree tool reports 0.7.0, while the
+**Approved by the developer, 2026-11-10:** "Approve 0.7 formats; continue 0.8".
+The implementation and audit are complete. Development continues through
+0.8 ownership/runtime/build checks. The build-tree tool reports 0.8.0, while the
 installed tool and assembly pin remain at 0.5.2. Nothing here authorizes
 installation or a stage move.
 
@@ -32,7 +151,7 @@ and required user activation steps. The CLI exposes these parts separately
 so temporary-root tests can prove them before the delivery front end is
 wired. They are not yet the workstation's login or delivery mechanism.
 
-### Draft formats and interfaces
+### Approved formats and interfaces
 
 Product defaults used by the settings engine live at
 `tree/defaults/home/<home-relative path>` in an archive, or
@@ -176,9 +295,9 @@ metadata, invalid fields and corrupt retry plans are refused. Signal tests
 require private PID namespaces and a freshly mounted private `/proc`;
 there is no host-process fallback.
 
-- Review these concrete format/interface choices with the developer before
-  advancing to 0.8. Ownership/runtime checks, the actual settings list and
-  layering recipes, login/tam nut wiring and candidate delivery integration
+- The developer reviewed and approved these concrete formats before
+  advancing to 0.8. The actual settings list and layering recipes,
+  login/tam nut wiring and candidate delivery integration
   remain later work. Real workstation, power-cut, console-repair and
   Nix/Home Manager rollback proofs remain mandatory.
 

@@ -255,7 +255,7 @@ static int stats_line(void *user, size_t line, int format, char **f, size_t n) {
 int tb_stats_read(const char *path, tb_stats_t *s) {
     memset(s, 0, sizeof *s);
     size_t len;
-    char *text = tb_read_at(AT_FDCWD, path, &len);
+    char *text = tb_read_limit(AT_FDCWD, path, &len,16U*1024U*1024U);
     if (!text) return errno == ENOENT ? 0 : -1;
     int r = tam_rec_parse(text, len, 6, 1, stats_line, s, NULL);
     free(text);

@@ -6,6 +6,27 @@
 #include <unistd.h>
 
 bool tb_quiet;
+char *tb_read_limit(int dirfd,const char *rel,size_t *len,size_t limit) {
+    int fd=openat(dirfd,rel,O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC);
+    if(fd<0)return NULL;
+    struct stat a,b; char *data=NULL; size_t off=0;
+    if(fstat(fd,&a) || !S_ISREG(a.st_mode) || a.st_size<0 || (uint64_t)a.st_size>limit)goto done;
+    size_t n=(size_t)a.st_size;
+    data=malloc(n+1); if(!data)goto done;
+    while(off<n) {
+        ssize_t r=read(fd,data+off,n-off);
+        if(r<0 && errno==EINTR)continue;
+        if(r<=0)break;
+        off+=(size_t)r;
+    }
+    if(off!=n || fstat(fd,&b) || a.st_size!=b.st_size ||
+       a.st_ctim.tv_sec!=b.st_ctim.tv_sec || a.st_ctim.tv_nsec!=b.st_ctim.tv_nsec) {
+        free(data); data=NULL; goto done;
+    }
+    data[n]=0; if(len)*len=n;
+done:
+    close(fd); if(!data)errno=EINVAL; return data;
+}
 
 char *tb_read_at(int dirfd, const char *rel, size_t *len) {
     int fd = openat(dirfd, rel, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);

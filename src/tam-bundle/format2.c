@@ -153,7 +153,9 @@ int tb_archive_unpack(const char *archive, const char *dest) {
      if (n && path[n-1]=='/') path[n-1]=0;
             if (!tam_path_is_safe_rel(path) || !layout(path) || mode > 0777) goto done;
             /* Apply metadata and snapshot bounds before extracting bytes. */
-            if((!strcmp(path,"capture/CAPTURE") && size>4096) ||
+            if((!strcmp(path,"BUNDLE") && size>4U*1024U*1024U) ||
+               (!strcmp(path,"MANIFEST") && size>32U*1024U*1024U) ||
+               (!strcmp(path,"capture/CAPTURE") && size>4096) ||
                ((!strcmp(path,"capture/FILES") || !strcmp(path,"SETTINGS") ||
                  !strncmp(path,"capture/files/",14)) && size>16U*1024U*1024U) ||
                (!strncmp(path,"capture/",8) && strlen(path)>=4096))goto done;

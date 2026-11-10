@@ -164,6 +164,7 @@ class UserSettings(unittest.TestCase):
         archive=self.base/'portable.tbundle'; self.tb('capture','-o',archive)
         source=self.root; fresh=self.base/'second-root'
         shutil.copytree(source/'usr/share/tamlinux/rootstock',fresh/'usr/share/tamlinux/rootstock')
+        shutil.copytree(source/'var/lib/pacman',fresh/'var/lib/pacman')
         self.root=fresh
         self.tb('install',archive); self.tb('apply'); self.tb('check')
         self.home=self.base/'second-home'; self.home.mkdir()

@@ -26,6 +26,7 @@ typedef struct {
     char                   key[TAM_SHA256_HEX_LEN + 1];
     char                  *entry;  /* cache entry directory */
     char                  *out;    /* entry/out: the installed files */
+    char                   buildenv[TB_HASH_LEN+1];
     bool                   cached;
 } comp_t;
 
@@ -39,6 +40,9 @@ typedef struct {
     char                  *packaging, *packaging_commit;
     char                  *tools[4];
     size_t                 ntools;
+    tb_native_t            native;
+    char                   buildenv[TB_HASH_LEN+1];
+    tam_str_t              environment;
 } build_t;
 
 static comp_t *comp_named(build_t *b, const char *name) {
@@ -76,11 +80,111 @@ static char *tool_line(const char *name, const char *const argv[]) {
 }
 
 static void find_tools(build_t *b) {
-    const char *gcc[] = {"gcc", "-dumpfullversion", NULL};
-    const char *make[] = {"make", "--version", NULL};
+    const char *gcc[] = {"/usr/bin/gcc", "-dumpfullversion", NULL};
+    const char *make[] = {"/usr/bin/make", "--version", NULL};
     char *t;
     if ((t = tool_line("gcc", gcc))) b->tools[b->ntools++] = t;
     if ((t = tool_line("make", make))) b->tools[b->ntools++] = t;
+}
+static void text_hash(const char *text,size_t len,char hash[TB_HASH_LEN+1]) {
+    tam_sha256_t ctx; uint8_t d[TAM_SHA256_LEN];
+    tam_sha256_init(&ctx); tam_sha256_update(&ctx,text,len); tam_sha256_final(&ctx,d);
+    memcpy(hash,"sha256:",7); tam_sha256_hex(d,hash+7);
+}
+static int str_cmp(const void *a,const void *b) {return strcmp(*(char *const *)a,*(char *const *)b);}
+static int build_environment(build_t *b) {
+    const char *base[]={"gcc","binutils","glibc","linux-api-headers","make","pkgconf"};
+    b->environment=tam_str_new("format 1\n");
+    for(size_t i=0;i<b->n;i++) {
+        comp_t *c=&b->c[i];
+        char *packages[70]={0}; size_t count=0; bool ok=true;
+        for(size_t j=0;j<6;j++)packages[count++]=strdup(base[j]);
+        for(size_t j=0;j<c->rc->nbuild_needs;j++) {
+            const char *line=c->rc->build_needs[j]; char name[128],op[8],min[80];
+            int n=sscanf(line,"%127s %7s %79s",name,op,min);
+            char *actual=tb_native_version(&b->native,name);
+            if(!actual || (n==3 && tb_version_compare(actual,min)<0)) {
+                tb_err("%s: unmet build-needs: %s",c->rc->name,line); ok=false;
+            }
+            free(actual); packages[count++]=strdup(name);
+        }
+        for(size_t j=0;j<count;j++)if(!packages[j])ok=false;
+        if(ok)qsort(packages,count,sizeof *packages,str_cmp);
+        tam_str_t record=tam_str_new("format 1\n");
+        for(size_t j=0;ok && j<count;j++) {
+            if(j && !strcmp(packages[j],packages[j-1]))continue;
+            char *actual=tb_native_version(&b->native,packages[j]);
+            if(!actual){tb_err("build toolchain package is missing: %s",packages[j]); ok=false;}
+            else record=tam_str_cat_printf(record,"package %s %s\n",packages[j],actual);
+            free(actual);
+        }
+        for(size_t j=0;j<count;j++)free(packages[j]);
+        if(!ok || !record){tam_str_free(record); return -1;}
+        text_hash(record,tam_str_len(record),c->buildenv);
+        b->environment=tam_str_cat_printf(b->environment,"component %s\n",c->rc->name);
+        b->environment=tam_str_cat(b->environment,record+9);
+        tam_str_free(record);
+    }
+    if(!b->environment)return -1;
+    text_hash(b->environment,tam_str_len(b->environment),b->buildenv); return 0;
+}
+static int environment_unchanged(build_t *b) {
+    tb_native_t now;
+    if(tb_native_read("/",false,&now))return -1;
+    char *copy=strdup(b->environment); bool ok=copy!=NULL;
+    for(char *save=NULL,*line=copy?strtok_r(copy,"\n",&save):NULL;line;line=strtok_r(NULL,"\n",&save)) {
+        if(strncmp(line,"package ",8))continue;
+        char *name=line+8,*version=strchr(name,' ');
+        if(!version){ok=false; break;}
+        *version++=0;
+        char *actual=tb_native_version(&now,name);
+        if(!actual || strcmp(actual,version)){tb_err("build package changed during the build: %s",name); ok=false;}
+        free(actual);
+    }
+    free(copy); tb_native_free(&now); return ok?0:-1;
+}
+typedef struct {char key[65],hash[TB_HASH_LEN+1]; unsigned fields;} cache_stamp;
+static int stamp_line(void *arg,size_t line,int format,char **f,size_t n) {
+    (void)line; (void)format; cache_stamp *s=arg;
+    if(n!=2)return 1;
+    if(!strcmp(f[0],"key") && !(s->fields&1) && strlen(f[1])==64 && strspn(f[1],"0123456789abcdef")==64) {
+        strcpy(s->key,f[1]); s->fields|=1; return 0;
+    }
+    if(!strcmp(f[0],"hash") && !(s->fields&2) && strlen(f[1])==TB_HASH_LEN &&
+       !strncmp(f[1],"sha256:",7) && strspn(f[1]+7,"0123456789abcdef")==64) {
+        strcpy(s->hash,f[1]); s->fields|=2; return 0;
+    }
+    return 1;
+}
+static bool cache_check(comp_t *c,const char *done,bool full) {
+    size_t len=0,mlen=0;
+    char *stamp=tb_read_limit(AT_FDCWD,done,&len,4096),*path=tam_path_join(c->entry,"out.MANIFEST");
+    char *manifest=path?tb_read_limit(AT_FDCWD,path,&mlen,16U*1024U*1024U):NULL;
+    cache_stamp s={0}; bool ok=false; tb_manifest_t m={0}; tb_stats_t stats={0}; tb_check_t check={0};
+    if(!stamp || !manifest || len>4096 || mlen>16U*1024U*1024U ||
+       tam_rec_parse(stamp,len,2,1,stamp_line,&s,NULL) || s.fields!=3 || strcmp(s.key,c->key))goto done;
+    char hash[TB_HASH_LEN+1]; text_hash(manifest,mlen,hash);
+    if(strcmp(hash,s.hash) || tb_manifest_parse(manifest,mlen,"cached output manifest",&m))goto done;
+    free(path); path=tam_path_join(c->entry,"out.stats");
+    if(!path || tb_stats_read(path,&stats) || tb_tree_check(c->out,&m,&stats,full,&check))goto done;
+    ok=!check.edited && !check.missing && !check.extra;
+done:
+    free(stamp); free(manifest); free(path); tb_manifest_free(&m); tb_stats_free(&stats); tb_check_free(&check); return ok;
+}
+static int cache_write(comp_t *c,const char *done) {
+    tb_manifest_t m={0}; tb_stats_t stats={0}; int result=-1;
+    char *manifest=tam_path_join(c->entry,"out.MANIFEST"),*statpath=tam_path_join(c->entry,"out.stats");
+    if(!manifest || !statpath || tb_manifest_build(c->out,&m) || tb_stats_build(c->out,&m,&stats))goto done;
+    char hash[TB_HASH_LEN+1]; text_hash(m.text,m.len,hash);
+    char stamp[256]; int n=snprintf(stamp,sizeof stamp,"format 1\nkey %s\nhash %s\n",c->key,hash);
+    if(!tam_fs_write_atomic(manifest,m.text,m.len,0644))goto done;
+    tb_fault("cache-output-manifest");
+    if(tb_stats_write(statpath,&stats))goto done;
+    tb_fault("cache-output-stats");
+    if(!tam_fs_write_atomic(done,stamp,(size_t)n,0644))goto done;
+    tb_fault("cache-output-done"); result=0;
+done:
+    free(manifest); free(statpath); tb_manifest_free(&m); tb_stats_free(&stats); return result;
 }
 
 /* ---- Cache keys -------------------------------------------------------- */
@@ -88,10 +192,12 @@ static void find_tools(build_t *b) {
 static void make_key(build_t *b, comp_t *c) {
     tam_sha256_t h;
     tam_sha256_init(&h);
-    tam_str_t s = tam_str_new("tam-bundle build 2\nroot " TB_BUILD_ROOT "\n");
+    tam_str_t s = tam_str_new("tam-bundle build 3\nroot " TB_BUILD_ROOT "\n");
+    s=tam_str_cat(s,"tool tam-bundle " TB_VERSION "\n");
     s = tam_str_cat_printf(s, "component %s\ncommit %s\noutput %s\n", c->rc->name, c->lock->commit,
                            c->rc->build_only ? "build-only" : "bundle");
     if (!c->rc->build_only) s = tam_str_cat_printf(s, "prefix %s\n", b->o->prefix);
+    s=tam_str_cat_printf(s,"buildenv %s\n",c->buildenv);
     for (size_t i = 0; i < b->ntools; i++) s = tam_str_cat_printf(s, "tool %s\n", b->tools[i]);
     for (size_t i = 0; i < c->rc->ndeps; i++)
         s = tam_str_cat_printf(s, "dep %s %s\n", c->rc->deps[i], comp_named(b, c->rc->deps[i])->key);
@@ -270,14 +376,13 @@ static int build_one(build_t *b, comp_t *c) {
         binds[nbinds++] = (tb_bind_t){deps[i]->out, fixed_deps[i], true};
     }
 
-    /* A small, fixed environment: only PATH comes from the caller. */
-    const char *path = getenv("PATH");
+    /* The caller cannot redirect build tools through PATH. */
     tam_str_t pc = tam_str_new(NULL);
     for (size_t i = 0; i < ndeps; i++)
         pc = tam_str_cat_printf(pc, "%s%s/lib/pkgconfig:%s/share/pkgconfig", tam_str_len(pc) ? ":" : "",
                                 fixed_deps[i], fixed_deps[i]);
     size_t ne = 0;
-    if (asprintf(&env[ne++], "PATH=%s", path && path[0] ? path : "/usr/bin:/bin") < 0 ||
+    if (!(env[ne++] = strdup("PATH=/usr/bin")) ||
         asprintf(&env[ne++], "HOME=%s", w_home) < 0 || asprintf(&env[ne++], "TMPDIR=%s", w_tmp) < 0 ||
         asprintf(&env[ne++], "SOURCE_DATE_EPOCH=%lld", when) < 0 ||
         asprintf(&env[ne++], "PKG_CONFIG_PATH=%s", pc ? pc : "") < 0 || !(env[ne++] = strdup("LC_ALL=C")) ||
@@ -301,7 +406,7 @@ static int build_one(build_t *b, comp_t *c) {
         const char **argv = calloc(rc->nvars + ntargets + 9, sizeof *argv);
         if (!argv) goto out;
         size_t a = 0;
-        argv[a++] = "make";
+        argv[a++] = "/usr/bin/make";
         argv[a++] = "-C";
         argv[a++] = w_src;
         if (pass == 0) argv[a++] = jobs;
@@ -346,7 +451,7 @@ static int build_one(build_t *b, comp_t *c) {
     tb_remove_at(efd, c->entry, "tmp");
     close(efd);
     /* The stamp goes last: an entry without it is rebuilt. */
-    if (!tam_fs_write_atomic(done, c->key, strlen(c->key), 0644)) goto out;
+    if(environment_unchanged(b) || cache_write(c,done))goto out;
     result = TB_OK;
 out:
     if (logfd >= 0) close(logfd);
@@ -629,14 +734,12 @@ int tb_build(const tb_build_opts_t *o) {
         goto out;
     }
     find_tools(&b);
+    if(tb_native_read("/",false,&b.native) || build_environment(&b))goto out;
 
-    size_t built = 0;
-    long long newest = 0; /* the newest locked commit: the manual index's time */
-    if (b.r.index_man && b.packaging_commit &&
-        tb_git_commit_time(b.packaging, b.packaging_commit, &newest) != 0) goto out;
-    for (size_t i = 0; i < b.n; i++) {
-        comp_t *c = &b.c[i];
-        const char *name = c->rc->name, *commit = c->lock->commit;
+    /* Resolve/fetch every source before starting any offline build. */
+    for(size_t i=0;i<b.n;i++) {
+        comp_t *c=&b.c[i];
+        const char *name=c->rc->name,*commit=c->lock->commit;
         char *local = o->repos ? tam_path_join(o->repos, name) : NULL;
         if (local && tb_git_has(local, commit)) {
             c->repo = local;
@@ -647,6 +750,15 @@ int tb_build(const tb_build_opts_t *o) {
             c->repo = tam_path_join(b.cache, git_leaf);
             if (!c->repo || tb_git_fetch(c->repo, c->lock->url, commit) != 0) goto out;
         }
+    }
+
+    size_t built = 0;
+    long long newest = 0; /* the newest locked commit: the manual index's time */
+    if (b.r.index_man && b.packaging_commit &&
+        tb_git_commit_time(b.packaging, b.packaging_commit, &newest) != 0) goto out;
+    for (size_t i = 0; i < b.n; i++) {
+        comp_t *c = &b.c[i];
+        const char *name = c->rc->name, *commit = c->lock->commit;
         long long when = 0;
         if (b.r.index_man && tb_git_commit_time(c->repo, commit, &when) != 0) goto out;
         if (when > newest) newest = when;
@@ -657,11 +769,8 @@ int tb_build(const tb_build_opts_t *o) {
         c->out = c->entry ? tam_path_join(c->entry, "out") : NULL;
         char *done = c->entry ? tam_path_join(c->entry, "done") : NULL;
         if (!c->out || !done) goto out;
-        size_t dlen;
-        char *stamp = tb_read_at(AT_FDCWD, done, &dlen);
+        c->cached=cache_check(c,done,o->verify);
         free(done);
-        c->cached = stamp && strcmp(stamp, c->key) == 0;
-        free(stamp);
         if (c->cached) {
             tb_note("%s at %.12s: from the build cache", name, commit);
             continue;
@@ -690,6 +799,12 @@ int tb_build(const tb_build_opts_t *o) {
     }
     if (merge(&b, partial) != 0) goto out;
     if (packaging_files(&b, partial) != 0) goto out;
+    char *recipe=tam_path_join(partial,"recipe"),*envfile=recipe?tam_path_join(recipe,"BUILDENV"):NULL;
+    bool env_ok=recipe && envfile && tam_fs_mkdir_p(recipe,0755) &&
+        tam_fs_write_atomic(envfile,b.environment,tam_str_len(b.environment),0644);
+    free(recipe); free(envfile);
+    if(!env_ok)goto out;
+    tb_fault("build-environment-record");
     /* After the cache keys, so a man-db update rebuilds no component. */
     if (b.r.index_man) {
         char *tool = tb_man_index_tool();
@@ -714,6 +829,7 @@ int tb_build(const tb_build_opts_t *o) {
         if (ok) sources[b.n] = source_text[b.n];
     }
     tb_seal_t so = {
+        .buildenv=b.buildenv,
         .name = b.r.name, .version = o->version, .host = o->host ? o->host : b.r.host, .built = o->built,
         .sources = sources, .nsources = nsources,
         .tools = (const char *const *)b.tools, .ntools = b.ntools,
@@ -721,15 +837,27 @@ int tb_build(const tb_build_opts_t *o) {
         .after = (const char *const *)b.r.after, .nafter = b.r.nafter,
     };
     char id[256] = "";
-    bool sealed = ok && tb_seal(partial, &so, id) == TB_OK;
+    tb_bundle_t check={0};
+    tb_manifest_t dummy={0};
+    const char *temp_id="sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    tam_str_t needs=tam_str_new("format 1\nname build\nversion 0\nhost any\n");
+    needs=tam_str_cat_printf(needs,"hash %s\n",temp_id);
+    for(size_t i=0;i<b.r.nneeds;i++)needs=tam_str_cat_printf(needs,"needs %s\n",b.r.needs[i]);
+    bool dependencies=needs && !tb_bundle_parse(needs,tam_str_len(needs),"build needs",&check) && !tb_link_check("/",partial,&check,true);
+    tam_str_free(needs); tb_bundle_free(&check); tb_manifest_free(&dummy);
+    bool sealed = ok && dependencies && tb_seal(partial, &so, id) == TB_OK;
     for (size_t i = 0; source_text && i < nsources; i++) free(source_text[i]);
     free(source_text);
     free(sources);
-    if (!sealed) goto out;
-    if (renameat2(AT_FDCWD, partial, AT_FDCWD, o->output, RENAME_NOREPLACE) != 0 || !tam_fs_sync_dirat(pfd, ".")) {
+    if (!sealed || environment_unchanged(&b)) goto out;
+    tb_fault("build-sealed");
+    if (renameat2(AT_FDCWD, partial, AT_FDCWD, o->output, RENAME_NOREPLACE) != 0) {
         tb_err("cannot rename %s to %s: %s", partial, o->output, strerror(errno));
         goto out;
     }
+    tb_fault("build-output-rename");
+    if(!tam_fs_sync_dirat(pfd,"."))goto out;
+    tb_fault("build-output-directory-sync");
     tb_note("built %s in %s: %zu components, %zu built, %zu from the cache", id, o->output, b.n, built, b.n - built);
     result = TB_OK;
 out:
@@ -744,6 +872,8 @@ out:
     free(b.c);
     for (size_t i = 0; i < b.ntools; i++) free(b.tools[i]);
     free(b.cache);
+    tb_native_free(&b.native);
+    tam_str_free(b.environment);
     free(b.packaging); free(b.packaging_commit);
     free(partial);
     free(parent);

@@ -46,6 +46,7 @@ static const char usage_text[] =
     "  --state DIR     state directory (default by user; see tam-bundle(1))\n"
     "  --dry-run       say what would change, change nothing\n"
     "  --full          hash every file instead of trusting unchanged file stats\n"
+    "  --verify        fully hash cached build outputs before reuse\n"
     "  --save-edits    save changed live files before switching\n"
     "  --quiet         print only errors\n"
     "  --version, --help\n"
@@ -104,7 +105,7 @@ static int cmd_build(const opts_t *o) {
     char *prefix = tam_path_join(o->slot, "current");
     tb_build_opts_t bo = {
         .recipes = o->args[1], .lock = o->args[2], .output = o->output, .version = o->version,
-        .host = o->host, .repos = o->repos, .prefix = prefix, .built = o->built,
+        .host = o->host, .repos = o->repos, .prefix = prefix, .built = o->built, .verify = o->sw.full,
     };
     int r = prefix ? tb_build(&bo) : TB_FAIL;
     free(prefix);
@@ -166,7 +167,7 @@ static int cmd_needs(const opts_t *o) {
     tb_bundle_t b;
     tb_manifest_t m;
     if (tb_tree_read(AT_FDCWD, o->args[1], &b, &m) != 0) return TB_FAIL;
-    size_t missing = tb_needs_check(&b, true);
+    size_t missing = b.format==2? (size_t)(tb_contract_check(o->root?o->root:"/",o->args[1],&b)!=0):tb_needs_check(&b,true);
     if (!missing) tb_note("%s: all %zu native needs are present", b.id, b.nneeds);
     tb_bundle_free(&b);
     tb_manifest_free(&m);
@@ -488,6 +489,7 @@ int main(int argc, char **argv) {
         else if (strcmp(a, "--state") == 0) { VALUE(); o.state = v; o.state_i = i; }
         else if (strcmp(a, "--dry-run") == 0) o.sw.dry_run = true;
         else if (strcmp(a, "--full") == 0) o.sw.full = true;
+        else if (strcmp(a, "--verify") == 0) o.sw.full = true;
         else if (strcmp(a, "--save-edits") == 0) o.sw.save_edits = true;
         else if (strcmp(a, "--quiet") == 0) tb_quiet = true;
         else if (strcmp(a, "--yes") == 0) o.yes = true;
@@ -539,6 +541,7 @@ int main(int argc, char **argv) {
     }
     if (!strcmp(cmd,"seal")) return cmd_seal(&o);
     if (!strcmp(cmd,"verify")) return cmd_verify(&o);
+    if (!strcmp(cmd,"needs")) return cmd_needs(&o);
     if(!o.root && !o.state && !strcmp(o.slot,TB_DEFAULT_SLOT) &&
        (!strcmp(cmd,"status") || !strcmp(cmd,"check") || !strcmp(cmd,"recover"))) {
         struct stat st;

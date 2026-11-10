@@ -228,6 +228,10 @@ static int bundle_line(void *user, size_t line, int format, char **f, size_t n) 
         if (!valid_hash(v)) return bad(bp->what, line, "hash must be sha256:<64 hex>");
         return set_once(&b->hash, v, bp->what, line);
     }
+    if(!strcmp(k,"buildenv")) {
+        if(!valid_hash(v))return bad(bp->what,line,"buildenv must be sha256:<64 hex>");
+        return set_once(&b->buildenv,v,bp->what,line);
+    }
     if (format == 2 && strcmp(k, "target") == 0)
         return push(&b->targets, &b->ntargets, v) ? 0 : 1;
     if(format==2 && !strcmp(k,"derived-from"))return set_once(&b->derived,v,bp->what,line);
@@ -251,8 +255,12 @@ static int bundle_line(void *user, size_t line, int format, char **f, size_t n) 
         char *copy = strdup(v);
         if (!copy) return bad(bp->what, line, "out of memory");
         char *kind = strtok(copy, " \t"), *target = strtok(NULL, " \t"), *pkgs = strtok(NULL, "");
-        bool ok = kind && target && (strcmp(kind, "command") == 0 || strcmp(kind, "file") == 0) &&
-                  (strcmp(kind, "file") != 0 || target[0] == '/');
+        bool ok = kind && target && tb_need_valid(kind,target,pkgs?pkgs:"");
+        if(ok && format==1) {
+            const char *rest=pkgs?pkgs:"";
+            while(*rest==' ' || *rest=='\t')rest++;
+            if((strcmp(kind,"file") && strcmp(kind,"command")) || !strncmp(rest,">=",2) || !strncmp(rest,"exact ",6))ok=false;
+        }
         if (ok) {
             tb_need_t *grown = realloc(b->needs, (b->nneeds + 1) * sizeof *grown);
             ok = grown != NULL;
@@ -277,7 +285,7 @@ static void free_list(char **list, size_t n) {
 }
 
 void tb_bundle_free(tb_bundle_t *b) {
-    free(b->name); free(b->version); free(b->hash); free(b->host); free(b->built);
+    free(b->name); free(b->version); free(b->hash); free(b->host); free(b->built); free(b->buildenv);
     free_list(b->targets, b->ntargets);
     free(b->derived); free_list(b->edits,b->nedits);
     free_list(b->sources, b->nsources);
@@ -337,12 +345,12 @@ int tb_tree_read(int dirfd, const char *dir, tb_bundle_t *b, tb_manifest_t *m) {
     snprintf(bpath, sizeof bpath, "%s/BUNDLE", dir);
     snprintf(mpath, sizeof mpath, "%s/MANIFEST", dir);
     size_t blen = 0, mlen = 0;
-    char *btext = tb_read_at(dirfd, bpath, &blen);
+    char *btext = tb_read_limit(dirfd, bpath, &blen,4U*1024U*1024U);
     if (!btext) {
         tb_err("cannot read %s: %s", bpath, strerror(errno));
         return -1;
     }
-    char *mtext = tb_read_at(dirfd, mpath, &mlen);
+    char *mtext = tb_read_limit(dirfd, mpath, &mlen,32U*1024U*1024U);
     if (!mtext) {
         tb_err("cannot read %s: %s", mpath, strerror(errno));
         free(btext);

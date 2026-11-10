@@ -179,6 +179,45 @@ expect 0 "and back to the first build" tb --quiet back
 [ "$("$SLOT/current/bin/app")" = "hello from lib v1 in $SLOT/current" ] && pass "rollback restores the first build" \
     || fail "after back: $("$SLOT/current/bin/app")"
 
+# ---- 0.8 build environment, cache integrity and isolation -------------------
+
+grep -q '^buildenv sha256:' "$BASE/b4/BUNDLE" && test -s "$BASE/b4/recipe/BUILDENV" \
+    && pass "BUNDLE carries the native build environment identity and record" || fail "build environment record"
+for cached in "$XDG_CACHE_HOME"/tamlinux/tam-bundle/build/app-*/out/bin/app; do
+    printf '\ncorrupted cache\n' >> "$cached"
+done
+expect 0 "a corrupt cache entry rebuilds from its source" tb build "$RECIPES" "$LOCK" -o "$BASE/cache-repaired" --version 1.1 --verify
+grep -q '^building app' "$BASE/out" && pass "the corrupt app was rebuilt" || fail "corrupt cache was reused"
+[ "$(id_of "$BASE/cache-repaired")" = "$(id_of "$BASE/b4")" ] \
+    && pass "cache repair reproduces the original bundle" || fail "cache repair changed identity"
+
+R=$(variant native-min)
+printf 'build-needs make >= 9999\n' >> "$R/app.recipe"
+expect 1 "unmet native build package minimum refuses before make" tb build "$R" "$LOCK" -o "$BASE/native-min" --version 1
+R=$(variant fixed-path)
+printf 'make-vars PATH=/untrusted\n' >> "$R/app.recipe"
+expect 1 "recipes cannot override the fixed PATH" tb build "$R" "$LOCK" -o "$BASE/fixed-path" --version 1
+
+# A source-controlled probe observes the environment and its network
+# namespace without talking to any service or downloading anything.
+mkdir -p "$REPOS/isolation"
+git -C "$REPOS/isolation" init -q -b main
+cat > "$REPOS/isolation/Makefile" <<'EOF'
+all:
+	@test "$$PATH" = /usr/bin
+	@test "$$(readlink /proc/self/ns/net)" != "$(HOST_NET)"
+install:
+	install -d $(DESTDIR)$(PREFIX)/share/isolation
+	echo offline > $(DESTDIR)$(PREFIX)/share/isolation/proof
+EOF
+ISO=$(commit_all "$REPOS/isolation" "isolation" "2026-04-01T00:00:00Z")
+mkdir -p "$BASE/isolation-recipes"
+printf 'format 1\nname isolation\n' > "$BASE/isolation-recipes/bundle"
+printf 'format 1\ncomponent isolation\nbuild make\nmake-vars HOST_NET=%s\n' "$(readlink /proc/self/ns/net)" > "$BASE/isolation-recipes/isolation.recipe"
+printf 'format 1\ncomponent isolation %s %s\n' "$REPOS/isolation" "$ISO" > "$BASE/isolation.lock"
+expect 0 "build tools use only /usr/bin and an isolated network namespace" \
+    tb build "$BASE/isolation-recipes" "$BASE/isolation.lock" -o "$BASE/isolation-out" --version 1 --repos "$REPOS"
+
 # ---- Explicit make targets and packaging files ------------------------------
 
 R=$(variant targets)

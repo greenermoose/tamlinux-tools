@@ -15,6 +15,10 @@
 
 > Implement and verify the work, keep the handoff current, and distinguish automated proofs from real-machine acceptance. Preserve Nix/Home Manager delivery and rollback. Privileged steps and exact Test, Run and Release candidates retain their separate approvals.
 
+Review response:
+
+> Approve 0.7 formats; continue 0.8
+
 ## Implemented
 
 - Bounded stable regular-file reads for settings metadata, exact required
@@ -39,7 +43,7 @@
   archive before atomic, non-replacing publication, then syncs its parent.
   Import is repeatable after capture publication.
 - The public design and manual describe the concrete formats and retry
-  behavior. They remain unaccepted pending the developer's review.
+  behavior. The developer approved the 0.7 formats after reviewing them.
 
 ## Verification
 
@@ -78,7 +82,51 @@ installation, candidate stage move, release or Nix retirement occurred.
 Review the concrete formats at the start of
 [`docs/plans/tam-bundle.md`](../plans/tam-bundle.md#07-development-checkpoint).
 The developer confirmed readiness and the exact design file was displayed
-in Micro. Format acceptance is pending; it precedes
+in Micro, then approved its 0.7 formats and directed continuation through
 0.8, then recipes/tam nut, candidate integration and real-machine migration
 proofs. Each privileged step and exact Test, Run and Release still needs
 its separate approval.
+
+## 0.8 tool checkpoint
+
+After 0.7 acceptance, this session implemented 0.8 native ownership and
+runtime contracts, build environment identity, checked caches, offline
+builds and a fully static production tool. The public design's 0.8
+checkpoint specifies the actual rootstock profile id, requirement forms,
+ELF and QML checks, `recipe/BUILDENV`, and cache `done` record.
+
+- Arch package queries cover database-listed paths even when absent on
+  disk. Prepare and apply/retry refuse native conflicts and unmet runtime
+  requirements. Target checks run first; `status` and `check` report
+  compatibility of all retained versions. The rootstock database is a
+  trusted input; no concurrent hostile root writer is modeled.
+- The ELF inspector reads headers, interpreter and dynamic dependency
+  records with bounded reads; it never executes inspected programs.
+  Build output checks shebangs and ELF files for undeclared dependencies.
+  QML version proof requires a declared module/version or literal export.
+  A real Python import probe requires the running rootstock.
+- Build identity includes the exact selected native package versions;
+  they are rechecked before recording a finished cache entry and publishing
+  the bundle. Native build package changes invalidate the applicable cache;
+  unrelated packages do not. Source resolution/fetching precedes make.
+  Builds use `/usr/bin` and a new network namespace. Cache hits check their
+  output manifest and tree, with full hashing under `--verify`.
+
+The final `make test` passed on 2026-11-10 with the exclusive checkout
+claim. It reran the 25 product and 21 settings tests and their existing
+fault/kill proofs. All 10 new runtime tests passed, including native
+database/ownership refusals, retained compatibility, minimum and exact
+versions, QML/Python fixtures, missing and malformed ELF dependencies,
+selected product interpreters, and the production binary's lack of
+`PT_INTERP` and `PT_DYNAMIC`. Two new build proofs passed: selected-package
+invalidation with a synthetic database in a private mount namespace, and
+seven cache/publication fault boundaries plus 12 randomized kills. The
+existing build/lock/cache, format-1, file selector, manual, help, polkit and
+outside-sentinel containment checks passed. ASan/UBSan reported no finding.
+
+The proof is for the tool in temporary roots and private namespaces, with
+no host-process fallback. It is not an accepted native workstation
+installation or a power-cut, login, console or Nix recovery proof. The
+existing builder still builds its legacy slot layout; the format-2
+workstation recipe split, tam nut and delivery integration are next. No
+assembly pin, Nix/Home Manager generation, candidate or release moved.
