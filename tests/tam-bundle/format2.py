@@ -100,6 +100,44 @@ class ProductTransactions(unittest.TestCase):
         self.tb('apply')  # archives a complete transaction
         self.assertIsNone(self.tx())
 
+    def test_apply_only_renames_prepared_files(self):
+        self.install_a(); self.tb('install',self.b)
+        self.tb('apply',env={'TAM_BUNDLE_FAULT':'v2-copy-sync'})
+        self.assert_live(self.b)
+        status=self.tb('status').stdout
+        self.assertIn('previous: '+self.id(self.a),status)
+        self.assertIn('bundle-hash: sha256:',status)
+
+    def test_staged_corruption_refuses_before_live_mutation(self):
+        self.install_a(); self.tb('install',self.b)
+        stage=self.root/'usr/lib/tamlinux/staging'/self.tx()['id']/'placed/usr/bin/tam-demo'
+        stage.write_text('broken staging')
+        self.tb('apply',code=4)
+        self.assertEqual(self.tx()['state'],'applying')
+        self.assertIn('echo A',(self.root/'usr/bin/tam-demo').read_text())
+        self.assertTrue((self.root/'usr/bin/tam-old').exists())
+
+    def test_cancel_and_archive_interruption(self):
+        self.install_a(); self.tb('install',self.b)
+        self.tb('cancel',code=99,env={'TAM_BUNDLE_FAULT':'v2-cancel-unlink'})
+        self.tb('cancel'); self.assertIsNone(self.tx()); self.assert_live(self.a)
+        self.tb('install',self.b); self.tb('apply')
+        self.tb('apply',code=99,env={'TAM_BUNDLE_FAULT':'v2-complete-rename'})
+        self.tb('apply'); self.assertIsNone(self.tx()); self.assert_live(self.b)
+
+    def test_hundredth_file_fault(self):
+        self.install_a()
+        for i in range(110):
+            (self.b/f'placed/usr/bin/tam-bulk-{i:03d}').write_text('data')
+        (self.b/'BUNDLE').unlink(); (self.b/'MANIFEST').unlink()
+        self.run_tb('seal',self.b,'--format','2','--name','demo','--version','B')
+        self.tb('install',self.b,code=99,env={'TAM_BUNDLE_FAULT':'stage-100'})
+        self.assertEqual(self.tx()['state'],'staging'); self.tb('cancel')
+        self.tb('install',self.b)
+        self.tb('apply',code=99,env={'TAM_BUNDLE_FAULT':'stage-100'})
+        self.assertEqual(self.tx()['state'],'applying')
+        self.tb('apply'); self.assert_live(self.b)
+
     def test_bundle_hash_settings_and_format_one(self):
         self.run_tb('verify', self.a)
         (self.a/'SETTINGS').write_text('format 1\ncommon .bashrc\n')
@@ -112,6 +150,7 @@ class ProductTransactions(unittest.TestCase):
     def test_archive_portable_and_unsafe(self):
         archive=self.base/'bundle.tbundle'
         self.run_tb('pack', self.a, '-o', archive)
+        self.run_tb('verify',archive)
         self.tb('install', archive)
         self.tb('apply')
         self.assert_live(self.a)
@@ -119,6 +158,7 @@ class ProductTransactions(unittest.TestCase):
         with tarfile.open(evil,'w',format=tarfile.PAX_FORMAT) as t:
             info=tarfile.TarInfo('../escape');info.size=3;t.addfile(info,io.BytesIO(b'bad'))
         self.tb('install',evil,code=1)
+        self.run_tb('verify',evil,code=1)
         self.assertFalse((self.base/'escape').exists())
         self.assert_live(self.a)
 
@@ -143,6 +183,79 @@ class ProductTransactions(unittest.TestCase):
         self.tb('apply',code=1)
         self.assertEqual(self.tx()['state'],'ready')
         self.assertEqual((self.root/'usr/bin/tam-demo').read_text(),'changed')
+
+    def test_recovery_refuses_foreign_destinations_before_any_mutation(self):
+        self.install_a(); self.tb('install',self.b)
+        baseline=self.base/'armed'; shutil.copytree(self.root,baseline,symlinks=True)
+        for path in ('usr/bin/tam-demo','usr/bin/tam-old','usr/lib/tamlinux/current'):
+            with self.subTest(path=path):
+                shutil.rmtree(self.root); shutil.copytree(baseline,self.root,symlinks=True)
+                self.tb('apply',code=99,env={'TAM_BUNDLE_FAULT':'v2-state-applying'})
+                target=self.root/path
+                if target.is_symlink():
+                    target.unlink(); target.symlink_to('version/foreign')
+                else:
+                    target.write_text('administrator edit')
+                r=self.tb('apply',code=4)
+                self.assertIn('differs from',r.stderr)
+                self.assertEqual(self.tx()['state'],'applying')
+                if not target.is_symlink():
+                    self.assertEqual(target.read_text(),'administrator edit')
+                # The unrelated old placed file has not been removed.
+                self.assertTrue((self.root/'usr/bin/tam-old').exists())
+                if path!='usr/bin/tam-demo':
+                    self.assertIn('echo A',(self.root/'usr/bin/tam-demo').read_text())
+
+    def test_activating_recovery_checks_files_before_actions(self):
+        self.install_a(); self.tb('install',self.b)
+        self.tb('apply',code=99,env={'TAM_BUNDLE_FAULT':'v2-state-activating'})
+        (self.root/'usr/bin/tam-demo').write_text('foreign')
+        self.tb('apply',code=4)
+        self.assertEqual(self.tx()['state'],'activating')
+        self.assertEqual((self.root/'usr/bin/tam-demo').read_text(),'foreign')
+
+    def test_transaction_fields_are_required_unique_and_bounded(self):
+        self.install_a(); self.tb('install',self.b)
+        path=self.root/'var/lib/tamlinux/transaction'
+        original=path.read_text()
+        mutations=[original+'done 0\n', original+'capture -\n',
+                   original.replace('uid 0\n',''), original.replace('done 0','done -1'),
+                   original.replace('capture -\n',''), original.replace('kind product-only\n',''),
+                   original.replace('format 1','format 2'),
+                   original.replace('id '+self.tx()['id'],'id ../escape')]
+        for text in mutations:
+            with self.subTest(text=text):
+                path.write_text(text)
+                self.tb('apply',code=4); self.tb('status',code=4)
+                self.assertIn('echo A',(self.root/'usr/bin/tam-demo').read_text())
+        path.write_text(original); self.tb('apply'); self.assert_live(self.b)
+
+    def test_tree_links_and_reserved_install_paths_refused(self):
+        for name,target in [('escape','../placed/usr/bin/tam-demo'),
+                            ('nested/escape','../../placed/usr/bin/tam-demo')]:
+            b=self.base/('links-'+name.split('/')[0])
+            (b/'tree'/name).parent.mkdir(parents=True)
+            (b/'placed').mkdir()
+            (b/'tree'/name).symlink_to(target)
+            self.run_tb('seal',b,'--format','2','--name','bad','--version','1',code=1)
+        for name in ('BUNDLE','MANIFEST','SETTINGS','.placed'):
+            b=self.base/('reserved-'+name); (b/'tree').mkdir(parents=True); (b/'placed').mkdir()
+            (b/'tree'/name).write_text('collision')
+            self.run_tb('seal',b,'--format','2','--name','bad','--version','1',code=1)
+
+    def test_empty_sections_are_required(self):
+        b=self.base/'empty'; (b/'tree').mkdir(parents=True); (b/'placed').mkdir()
+        self.run_tb('seal',b,'--format','2','--name','empty','--version','1')
+        self.run_tb('verify',b)
+        self.tb('install',b); self.tb('apply'); self.tb('check')
+        (b/'tree').rmdir(); self.run_tb('verify',b,code=1)
+
+    def test_nonadjacent_restore_from_archive(self):
+        self.install_a(); self.tb('install',self.b); self.tb('apply')
+        c=self.bundle('C'); self.tb('install',c); self.tb('apply')
+        archive=self.base/'old.tbundle'; self.run_tb('pack',self.a,'-o',archive)
+        self.tb('restore',archive); self.tb('apply'); self.assert_live(self.a)
+        self.assertEqual((self.root/'usr/bin/tam-old').read_text(),'old')
 
     def test_busy_interpreter_and_launcher_exemption(self):
         self.install_a();self.tb('install',self.b)
@@ -280,6 +393,25 @@ class ProductTransactions(unittest.TestCase):
         self.tb('cancel',code=4)
         (self.base/'allow').touch();self.tb('apply');self.assert_live(self.b)
         self.assertIn('restart-new',(self.base/'actions').read_text())
+
+    def test_decline_and_recheck_failure_restart_old_services(self):
+        self.install_a()
+        helper=self.root/'usr/share/tamlinux/rootstock/services'
+        actions=self.base/'actions'
+        helper.write_text('#!/bin/sh\necho "$1" >> "'+str(actions)+'"\n')
+        helper.chmod(0o755)
+        profile=helper.parent/'profile'
+        profile.write_text(profile.read_text()+'services usr/share/tamlinux/rootstock/services\n')
+        self.tb('install',self.b)
+        with self.sleeper(argument=self.root/'usr/lib/tamlinux/current/share/value'):
+            self.tb('apply')
+        self.assertEqual(actions.read_text().splitlines(),['stop','restart-old'])
+        self.assertEqual(self.tx()['state'],'ready')
+        actions.write_text('')
+        (self.root/'usr/bin/tam-demo').write_text('changed after prepare')
+        self.tb('apply',code=1)
+        self.assertEqual(actions.read_text().splitlines(),['stop','restart-old'])
+        self.assertEqual(self.tx()['state'],'ready')
 
     def test_every_durable_transition(self):
         self.install_a()

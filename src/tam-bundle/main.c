@@ -129,7 +129,16 @@ static void warn_interrupted(const tb_slot_t *s) {
 /* ---- verify, needs, check ---------------------------------------------- */
 
 static int cmd_verify(const opts_t *o) {
-    if (o->nargs != 2) return usage("verify needs a directory");
+    if (o->nargs != 2) return usage("verify needs a directory or archive");
+    struct stat st;
+    if(lstat(o->args[1],&st))return TB_FAIL;
+    if(S_ISREG(st.st_mode)) {
+        char temp[]="/tmp/tam-bundle-verify-XXXXXX";
+        if(!mkdtemp(temp))return TB_FAIL;
+        int r=tb_archive_unpack(o->args[1],temp)?TB_FAIL:tb_v2_verify(temp);
+        if(tb_remove_at(AT_FDCWD,"/",temp+1))r=TB_FAIL;
+        return r;
+    }
     tb_bundle_t b;
     tb_manifest_t m;
     if (tb_tree_read(AT_FDCWD, o->args[1], &b, &m) != 0) return TB_FAIL;
@@ -504,6 +513,11 @@ int main(int argc, char **argv) {
     }
     if (!strcmp(cmd,"seal")) return cmd_seal(&o);
     if (!strcmp(cmd,"verify")) return cmd_verify(&o);
+    if(!o.root && !o.state && !strcmp(o.slot,TB_DEFAULT_SLOT) &&
+       (!strcmp(cmd,"status") || !strcmp(cmd,"check") || !strcmp(cmd,"recover"))) {
+        struct stat st;
+        if(!lstat(TB_DEFAULT_SLOT "/current",&st) && S_ISLNK(st.st_mode))o.root="/";
+    }
     if (o.root || !strcmp(cmd,"install") || !strcmp(cmd,"prepare") || !strcmp(cmd,"apply") || !strcmp(cmd,"cancel") || !strcmp(cmd,"restore")) {
         if (o.nargs > 2) return usage("too many transaction arguments");
         return tb_v2_main(o.root ? o.root : "/", cmd, o.nargs==2 ? o.args[1] : NULL, o.sw.dry_run, o.if_pending, o.yes);

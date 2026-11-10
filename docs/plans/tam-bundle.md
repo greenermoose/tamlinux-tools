@@ -17,6 +17,189 @@
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
   switching](../../upstream/2026-11-09-file-bundles-and-atomic-switch.md).
 
+## 0.6 implementation review
+
+**Approved by the developer, 2026-11-10:** "Approve 0.6 formats; continue 0.7".
+These are the concrete formats and recovery choices implemented by 0.6.0.
+This closes the implementation-format review; it does not authorize
+installation or a Test, Run or Release. The later sections describe the complete design;
+settings, native ownership/runtime checks and delivery integration are
+still later migration steps.
+
+### Archive and installed layout
+
+`seal --format 2` reads `tree/` and `placed/`, both real directories with
+mode `0755`. `SETTINGS` is a separate identity input, created as `format 1`
+with no entries when absent. It is carried unchanged, without interpreting
+or applying settings in 0.6. `target` lines are repeatable descriptions,
+included in the hash; their runtime checks belong to 0.8. The default seal
+and the existing recipe builder still produce format 1 until recipe work.
+
+`pack DIR -o FILE` writes an uncompressed POSIX pax tar in this order:
+
+```text
+BUNDLE
+MANIFEST
+SETTINGS
+placed/...
+tree/...
+```
+
+The reader accepts only these records and payload roots. Each directory
+precedes its children; `BUNDLE` and `MANIFEST` must be the first two payload
+members. Per-file pax headers may precede them and supply `path`,
+`linkpath`, `mtime`, `atime` or `ctime`; other pax keys are refused. Pax
+data is limited to 64 KiB and one file to 16 GiB. Headers have checked
+octal sizes, checksums and modes at most `0777`. Two zero blocks terminate
+the archive. Duplicate members, absolute paths, `..`, hard links, device
+nodes and placed symlinks are refused. Extraction opens parents without
+following links; full verification checks the extracted manifest and hash.
+`verify` accepts a directory or an archive. Archive verification uses a
+private temporary directory and removes it afterward.
+
+The format-2 manifest is sorted by the expanded archive path: all `p`
+entries (`placed/...`) first, then `t` entries (`tree/...`), parents before
+children. The structural `placed/` and `tree/` entries are implicit;
+their children are explicit. Every other directory has its own manifest
+entry. A tree link must stay within `tree/`, not merely within the archive.
+`BUNDLE`, `MANIFEST`, `SETTINGS` and `.placed` are reserved at the top of
+`tree/`, because they have installed meanings. Recipe material goes under
+`tree/recipe/`, covered by the tree manifest, rather than in an unrecorded
+top-level `recipe/` directory. Adding the actual pinned recipes is a later
+migration step.
+
+Prepare copies and verifies the bundle under
+`/usr/lib/tamlinux/staging/<transaction id>/`, with its archive layout.
+It also materializes and syncs the retained version:
+
+```text
+/usr/lib/tamlinux/version/<bundle id>/
+    BUNDLE, MANIFEST, SETTINGS
+    <contents of tree/>
+    .placed/<contents of placed/>
+```
+
+That version is published by renaming `staging/<transaction id>/version`
+into `version/<bundle id>` and syncing the destination directory, before
+the record becomes **ready**. Apply renames prepared files from
+`staging/<transaction id>/placed/...` over their standard destinations;
+it does not copy replacement bytes. The retained `.placed/` copies remain
+available for rollback. `current` switches with one rename of a temporary
+relative symlink. A retained version is verified before it is reused.
+
+### Transaction record
+
+The transaction has its own record format, independent of bundle format 2:
+
+```text
+format 1
+id 0123456789abcdef0123456789abcdef
+from tamlinux-0.6.0-0123456789ab
+to tamlinux-0.6.1-abcdef012345
+capture -
+uid 1000
+kind product-only
+state ready
+done 0
+```
+
+All eight keys are required exactly once; unknown keys, duplicate keys,
+negative numbers and newer record formats are refused. `id` is 16 random
+bytes rendered as 32 lowercase hex digits. `from` may be `-` for an empty
+installation; `to` must name a different bundle. `capture -` and
+`kind product-only` are the only values in 0.6. `uid` records the invoking
+numeric user; the settings/privilege integration will bind the initiating
+user in later versions. `done` counts the completed rootstock profile
+steps, so a failed required step is retried while **activating**.
+
+The five states and their recovery meanings are the table under "The
+transaction". Each write uses `.transaction.new`, file `fsync`, rename,
+and parent-directory `fsync`. The same sequence writes `record` (the new
+format-2 manifest) and `keep` (`format 1`, then `previous <old id>`).
+A completed transaction stays visible until the next apply or prepare
+renames it to `last-transaction` and syncs the state directory. In 0.6 this
+is the last completion record, not an accumulating history. Cancel first
+unlinks and syncs the **staging** or **ready** record, then removes scratch;
+an interruption may leave unused staging, never an armed missing source.
+
+Before entering **applying**, prepare's file/mount checks are repeated and
+damaged rollback copies are repaired from verified live old files. Native
+package ownership and runtime checks are deferred to 0.8. During recovery,
+every destination must match a state this transaction could have made:
+old bytes, new bytes, or an allowed absence. An unknown file, symlink or
+`current` identity stops the entire retry before further live changes.
+Before activation steps, all new files must be in place. A required step's
+failure keeps **activating** and returns exit 3; incomplete or malformed
+transactions return exit 4. A busy decline leaves **ready**, restarts the
+old services and returns success so a future launcher can use the old
+version. The session barrier itself is later delivery integration.
+
+`status --root ROOT` shows the current and previous bundle ids, full
+current bundle hash, and pending transaction id, state, from/to and capture.
+The input key remains the builder's cache identity; it is not the bundle
+hash or the random transaction id. Capture identity is `-` until 0.7.
+`restore BUNDLE` prepares any retained directory or transferred archive;
+it does not require the immediately previous version.
+
+### Temporary rootstock profile
+
+The tests supply a profile at
+`usr/share/tamlinux/rootstock/profile` beneath their temporary root:
+
+```text
+format 1
+allow usr/bin
+allow usr/share/man
+services usr/share/tamlinux/rootstock/services
+step system-daemon-reload required usr/share/tamlinux/rootstock/reload
+step man-index optional usr/share/tamlinux/rootstock/man-index
+```
+
+This is trusted local input, a regular file owned by the effective user
+and not group- or other-writable. Paths are relative to the installation
+root. The profile cannot allow `/etc`, `/usr/local`, the product's private
+tree, home paths or non-`tam`/`tam-*` commands; `tam-bundle` and `tam-nut`
+themselves are reserved for the native package. Commands are executed
+directly, with a 30-second deadline: the service helper receives `stop`,
+`restart-old` or `restart-new`, and a step receives `apply`; each also
+receives the transaction id. Helpers must be safe to repeat after a crash.
+The profile and real boot/login approval, ownership and trigger wiring
+remain tam nut work. This test interface does not authorize a live install.
+
+### Fault points and evidence boundary
+
+Only the sanitizer test executable honors these controls:
+`TAM_BUNDLE_TRACE=FILE` records a numbered event stream;
+`TAM_BUNDLE_FAULT_AT=N` exits 99 at one event;
+`TAM_BUNDLE_FAULT=NAME` exits at the first matching name;
+`TAM_BUNDLE_SLOW_US=N` delays file iterations for randomized SIGKILL tests.
+
+| Fault name | Boundary just reached |
+| --- | --- |
+| `v2-directory-sync` | directory `fsync`, including newly created parents |
+| `v2-filesystem-sync` | filesystem `syncfs` |
+| `v2-copy-sync` | prepared or rollback-copy file `fsync` |
+| `v2-record-file-sync` | temporary record file `fsync` |
+| `v2-record-rename` | atomic record replacement, before directory sync |
+| `v2-state-staging`, `-ready`, `-applying`, `-activating`, `-complete` | the named state and its directory sync |
+| `v2-version-rename` | retained version rename, before directory sync |
+| `v2-placed-rename` | prepared placed-file rename, before both directory syncs |
+| `v2-obsolete-rename` | obsolete placed file moved to old `.placed/` |
+| `v2-current-rename` | current-link rename, before directory sync |
+| `v2-complete-rename` | transaction archived, before directory sync |
+| `v2-cancel-unlink` | cancelled record removed and directory synced |
+| `stage-100`, `stage-200`, ... | each hundredth file iteration |
+
+The tests enumerate every reached prepare/apply event, interrupt it, and
+retry, and separately exercise cancel, completion archival and hundredth
+file faults. Process selection tests always require a private PID
+namespace and a freshly mounted private `/proc`; namespace setup failure
+fails the suite, with no host-process fallback. These are automated
+temporary-root results. They do not prove real session gating, power-loss
+recovery, second-workstation recreation or human acceptance. Those remain
+mandatory before bosgame cutover; Nix/Home Manager delivery and rollback
+remain in use.
+
 ## What tam-bundle is for
 
 One bundle describes and carries an exact Tamlinux installation: how it was
@@ -214,8 +397,8 @@ checks either form.
 BUNDLE
 MANIFEST
 SETTINGS          settings list with marks (the cultivar's defaults)
-recipe/           the bundle file, component recipes and lock it was built from
-tree/             the product tree
+tree/recipe/     the bundle file, component recipes and lock it was built from
+tree/...         the rest of the product tree
 placed/usr/bin/tam
 placed/usr/share/man/man1/tam.1
 ...
@@ -266,10 +449,12 @@ field says which part:
 
 ```text
 format 2
-t d 0755 -               lib
-t f 0644 sha256:<64 hex> share/fonts/...
+p d 0755 -               usr
+p d 0755 -               usr/bin
 p f 0755 sha256:<64 hex> usr/bin/tam
 p f 0644 sha256:<64 hex> usr/share/man/man1/tam.1
+t d 0755 -               lib
+t f 0644 sha256:<64 hex> share/fonts/...
 ```
 
 `t` is the product tree, `p` placed. Placed entries are files and

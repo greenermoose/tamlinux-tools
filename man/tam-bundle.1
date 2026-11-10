@@ -155,6 +155,9 @@ post-install actions.
 Apply a ready transaction before starting the desktop, or resume an
 interrupted apply forward.
 The transaction remains recorded through required post-install steps.
+Apply renames files already written and synced by prepare.
+Recovery refuses a destination whose contents match neither the old nor
+the new manifest, leaving the transaction incomplete for console repair.
 Without
 .BR \-\-yes ,
 old-file users leave the transaction ready.
@@ -173,6 +176,9 @@ An applying or activating transaction must finish forward.
 .TP
 .BI pack " dir " \-o " archive"
 Verify a format 2 bundle and create its portable archive.
+The archive begins with BUNDLE, MANIFEST and SETTINGS, followed by placed/
+and tree/. Recipe material belongs under tree/recipe/ and is hashed with
+the product tree.
 .TP
 .BI \-\-root " dir"
 Select the format 2 installation root (default

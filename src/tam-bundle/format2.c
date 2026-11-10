@@ -55,16 +55,14 @@ int tb_v2_verify(const char *dir) {
     int r = tb_tree_check(dir, &m, NULL, true, &c);
     /* Empty sections still have their two structural directories. */
     if (b.format == 2) {
-        if (!tb_manifest_find(&m, "tree")) { char *p = tam_path_join(dir, "tree");
-     struct stat st;
-            if (!lstat(p, &st) && S_ISDIR(st.st_mode) && c.extra) c.extra--;
-     free(p);
-     }
-        if (!tb_manifest_find(&m, "placed")) { char *p = tam_path_join(dir, "placed");
-     struct stat st;
-            if (!lstat(p, &st) && S_ISDIR(st.st_mode) && c.extra) c.extra--;
-     free(p);
-     }
+        const char *parts[]={"tree","placed"};
+        for(size_t i=0;i<2;i++) {
+            char *p=tam_path_join(dir,parts[i]);
+            struct stat st;
+            if(lstat(p,&st) || !S_ISDIR(st.st_mode) || (st.st_mode&07777)!=0755)r=-1;
+            else if(!tb_manifest_find(&m,parts[i]) && c.extra)c.extra--;
+            free(p);
+        }
     }
     bool ok = !r && !c.edited && !c.extra && !c.missing;
     tb_check_free(&c);

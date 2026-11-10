@@ -99,6 +99,16 @@ static int manifest_line(void *user, size_t line, int format, char **f, size_t n
             return bad(mp->what, line, "expected: t|p type mode value path");
         bool placed = !strcmp(f[0], "p");
         if (placed && !strcmp(f[1], "l")) return bad(mp->what, line, "placed links are forbidden");
+        if (!placed) {
+            const char *slash = strchr(f[4], '/');
+            size_t top = slash ? (size_t)(slash-f[4]) : strlen(f[4]);
+            const char *reserved_tree[] = {"BUNDLE", "MANIFEST", "SETTINGS", ".placed"};
+            for (size_t i=0;i<sizeof reserved_tree/sizeof *reserved_tree;i++)
+                if (strlen(reserved_tree[i])==top && !strncmp(f[4],reserved_tree[i],top))
+                    return bad(mp->what,line,"reserved installed-tree path");
+            if (!strcmp(f[1],"l") && !link_stays_inside(f[4],f[3]))
+                return bad(mp->what,line,"link leaves the product tree");
+        }
         const char *prefix = placed ? "placed" : "tree";
         if (!m->n || strncmp(m->v[m->n-1].path, prefix, strlen(prefix))) {
             char *wrapper[] = {"d", "0755", "-", (char *)prefix};

@@ -15,6 +15,7 @@ typedef struct {
     char id[65], from[256], to[256], state[16];
     unsigned long uid;
     size_t done;
+    unsigned fields;
 } transaction;
 typedef struct {
     const char *root;
@@ -29,6 +30,7 @@ typedef struct {
     char *services;
 } context;
 
+static int syncdir(int fd);
 static bool identity(const char *s) {
     if (!s || !*s || strlen(s)>240 || !strcmp(s,".") || !strcmp(s,"..")) return false;
     for (;*s;s++) if (!strchr("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._+-",*s))return false;
@@ -43,7 +45,8 @@ static int parent(int base, const char *path, bool create, char **leaf) {
         *last=0;
      char *save=NULL;
         for(char *p=strtok_r(copy,"/",&save);p && fd>=0;p=strtok_r(NULL,"/",&save)) {
-            if(create && mkdirat(fd,p,0755) && errno!=EEXIST) {close(fd);
+            int made=create?mkdirat(fd,p,0755):-1;
+            if(create && ((made && errno!=EEXIST) || (!made && syncdir(fd)))) {close(fd);
     fd=-1;
     break;
     }
@@ -59,7 +62,8 @@ static int directory(int base,const char *path,bool create) {
     char *leaf=NULL;
     int fd=parent(base,path,create,&leaf),out=-1;
     if(fd>=0) {
-        if(!create || !mkdirat(fd,leaf,0755) || errno==EEXIST) out=openat(fd,leaf,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+        int made=create?mkdirat(fd,leaf,0755):-1;
+        if(!create || (made && errno==EEXIST) || (!made && !syncdir(fd))) out=openat(fd,leaf,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
         close(fd);
     }
     free(leaf);
@@ -100,6 +104,12 @@ static int txline(void *u,size_t line,int fmt,char **f,size_t n) {
     (void)line;
     (void)fmt;
     if(n!=2)return 1;
+    const char *keys[]={"id","from","to","state","uid","done","capture","kind"};
+    unsigned bit=0;
+    for(size_t i=0;i<sizeof keys/sizeof *keys;i++)
+        if(!strcmp(f[0],keys[i]))bit=1U<<i;
+    if(!bit || (t->fields&bit))return 1;
+    t->fields|=bit;
     char *dst=NULL;
     size_t cap=0;
     if(!strcmp(f[0],"id")){dst=t->id;
@@ -118,7 +128,7 @@ static int txline(void *u,size_t line,int fmt,char **f,size_t n) {
         char *end;
     errno=0;
     unsigned long v=strtoul(f[1],&end,10);
-    if(errno || *end)return 1;
+    if(errno || !*f[1] || strspn(f[1],"0123456789")!=strlen(f[1]) || *end)return 1;
         if(!strcmp(f[0],"uid"))t->uid=v;
     else t->done=v;
     return 0;
@@ -137,7 +147,8 @@ static int readtx(context *c) {
     int r=tam_rec_parse(text,len,2,1,txline,&c->tx,NULL);
     free(text);
     transaction *t=&c->tx;
-    if(r || !identity(t->id) || !identity(t->from) || !identity(t->to) ||
+    if(r || t->fields!=255 || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
+       !identity(t->from) || !identity(t->to) || !strcmp(t->to,"-") || !strcmp(t->from,t->to) ||
        (strcmp(t->state,"staging") && strcmp(t->state,"ready") && strcmp(t->state,"applying") && strcmp(t->state,"activating") && strcmp(t->state,"complete"))) {
         tb_err("invalid transaction; desktop must remain blocked");
     return -1;
@@ -170,6 +181,31 @@ static int load(context *c,const char *id,tb_bundle_t *b,tb_manifest_t *m) {
     char path[300];
     snprintf(path,sizeof path,"version/%s",id);
     return tb_tree_read(c->slot,path,b,m);
+}
+static int previousline(void *u,size_t line,int fmt,char **f,size_t n) {
+    (void)line; (void)fmt;
+    char *id=u;
+    if(n!=2 || strcmp(f[0],"previous") || *id || !identity(f[1]))return 1;
+    strcpy(id,f[1]);
+    return 0;
+}
+static int print_status(context *c,const char *cur) {
+    char previous[256]="";
+    size_t len=0;
+    char *text=tb_read_at(c->state,"keep",&len);
+    if(text) {
+        int r=tam_rec_parse(text,len,2,1,previousline,previous,NULL);
+        free(text);
+        if(r || !*previous)return -1;
+    } else if(errno!=ENOENT)return -1;
+    printf("live: %s\nprevious: %s\n",cur,*previous?previous:"-");
+    if(strcmp(cur,"-")) {
+        tb_bundle_t b={0}; tb_manifest_t m={0};
+        if(load(c,cur,&b,&m))return -1;
+        printf("bundle-hash: %s\n",b.hash);
+        tb_bundle_free(&b); tb_manifest_free(&m);
+    }
+    return 0;
 }
 static bool allowed(context *c,const char *p,bool dir) {
     /* No profile can widen the product's fundamental placement boundary. */
@@ -275,6 +311,22 @@ static int copyfile(int from,const char *src,int to,const char *dst,unsigned mod
 static void location(char out[4096],const tb_entry_t *e) {
     snprintf(out,4096,"%s%s",!strncmp(e->path,"placed/",7)?".placed/":"",e->path+(!strncmp(e->path,"placed/",7)?7:5));
 }
+static int directory_modes(int fd,const tb_manifest_t *m,bool installed) {
+    /* Populate children before making a private directory read-only. */
+    for(size_t i=m->n;i>0;i--) {
+        const tb_entry_t *e=&m->v[i-1];
+        if(e->type!='d' || (installed && !strchr(e->path,'/')))continue;
+        char path[4096];
+        if(installed)location(path,e);
+        else snprintf(path,sizeof path,"%s",e->path);
+        int d=directory(fd,path,false);
+        if(d<0)return -1;
+        int r=fchmod(d,e->mode) || syncdir(d);
+        close(d);
+        if(r)return -1;
+    }
+    return 0;
+}
 static int version_check(context *c,const char *id,const tb_manifest_t *m) {
     char rel[300];
     snprintf(rel,sizeof rel,"version/%s",id);
@@ -295,6 +347,12 @@ static int version_check(context *c,const char *id,const tb_manifest_t *m) {
     else{link[n]=0;
     if(strcmp(link,e->value))r=-1;
     }}
+        if(e->type=='d') {
+            int d=directory(fd,path,false);
+            struct stat st;
+            if(d<0 || fstat(d,&st) || (unsigned)(st.st_mode&07777)!=e->mode)r=-1;
+            if(d>=0)close(d);
+        }
     }
     close(fd);
     return r;
@@ -379,6 +437,12 @@ static int copybundle(context *c,const char *source,const tb_bundle_t *b,const t
     return -1;
     }
     int r=0;
+    const char *parts[]={"tree","placed"};
+    for(size_t i=0;i<2;i++) {
+        int fd=directory(dest,parts[i],true);
+        if(fd<0)r=-1;
+        else close(fd);
+    }
     for(size_t i=0;i<m->n && !r;i++) {
         const tb_entry_t *e=&m->v[i];
         if(e->type=='d'){int fd=directory(dest,e->path,true);
@@ -396,6 +460,7 @@ static int copybundle(context *c,const char *source,const tb_bundle_t *b,const t
     }
     const char *records[]={"BUNDLE","MANIFEST","SETTINGS"};
     for(size_t i=0;i<3 && !r;i++)r=copyfile(src,records[i],dest,records[i],0644);
+    if(!r)r=directory_modes(dest,m,false);
     close(src);
     close(dest);
     char *slot=tam_path_join(c->root,"usr/lib/tamlinux"),*full=tam_path_join(slot,stage);
@@ -439,6 +504,7 @@ static int copybundle(context *c,const char *source,const tb_bundle_t *b,const t
     }
     }
     for(size_t i=0;i<3 && !r;i++)r=copyfile(dest,records[i],v,records[i],0644);
+    if(!r)r=directory_modes(v,m,true);
     close(v);
     close(dest);
     if(!r && syncall(c->slot))r=-1;
@@ -508,7 +574,7 @@ done:
     tb_manifest_free(&oldm);
     return r;
 }
-static int replace(context *c,const tb_entry_t *e,int version,int scratch) {
+static int replace(context *c,const tb_entry_t *e,int scratch) {
     const char *dst=e->path+7;
     if(e->type=='d'){int fd=directory(c->rootfd,dst,true);
     if(fd<0)return -1;
@@ -516,18 +582,66 @@ static int replace(context *c,const tb_entry_t *e,int version,int scratch) {
     close(fd);
     return r;
     }
-    char backup[4096];
-    location(backup,e);
-    if(copyfile(version,backup,scratch,"replacement",e->mode))return -1;
+    if(matches(c->rootfd,dst,e))return 0;
+    char *source=NULL;
+    int sp=parent(scratch,e->path,false,&source);
     char *leaf=NULL;
     int p=parent(c->rootfd,dst,true,&leaf);
-    int r=p<0?-1:renameat(scratch,"replacement",p,leaf);
+    int r=p<0 || sp<0?-1:renameat(sp,source,p,leaf);
     if(!r){tb_fault("v2-placed-rename");
-    r=syncdir(scratch) || syncdir(p);
+    r=syncdir(sp) || syncdir(p);
     }
+    if(sp>=0)close(sp);
+    free(source);
     if(p>=0)close(p);
     free(leaf);
     return r;
+}
+static int staged_check(context *c,const tb_manifest_t *m,int scratch) {
+    for(size_t i=0;i<m->n;i++) {
+        const tb_entry_t *e=&m->v[i];
+        if(e->type!='f' || strncmp(e->path,"placed/",7))continue;
+        if(!matches(c->rootfd,e->path+7,e) && !matches(scratch,e->path,e)) {
+            tb_err("staged file changed or missing: %s",e->path);
+            return -1;
+        }
+    }
+    return 0;
+}
+/* Before resuming any mutation, prove that every destination is a state this
+ * transaction could have produced. Do not overwrite an administrator's edit
+ * merely because a durable applying record exists. */
+static int resume_check(context *c,const tb_manifest_t *m,const tb_manifest_t *oldm,bool settled) {
+    char cur[256];
+    if(current(c,cur) || (strcmp(cur,c->tx.to) && (settled || strcmp(cur,c->tx.from)))) {
+        tb_err("current version differs from both transaction identities");
+        return -1;
+    }
+    const tb_manifest_t *sets[]={m,oldm};
+    for(size_t k=0;k<2;k++)for(size_t i=0;i<sets[k]->n;i++) {
+        const tb_entry_t *e=&sets[k]->v[i];
+        if(strncmp(e->path,"placed/",7))continue;
+        if(k && tb_manifest_find(m,e->path))continue;
+        const tb_entry_t *old=tb_manifest_find(oldm,e->path);
+        const tb_entry_t *new=tb_manifest_find(m,e->path);
+        char *leaf=NULL;
+        int p=parent(c->rootfd,e->path+7,false,&leaf);
+        struct stat st;
+        int exists=p<0?-1:fstatat(p,leaf,&st,AT_SYMLINK_NOFOLLOW);
+        int err=errno;
+        if(p>=0)close(p);
+        free(leaf);
+        bool ok;
+        if(exists)ok=err==ENOENT && (!new || (!settled && (!old || e->type=='d')));
+        else if(e->type=='d')ok=S_ISDIR(st.st_mode);
+        else ok=(new && matches(c->rootfd,e->path+7,new)) ||
+                (!settled && old && matches(c->rootfd,e->path+7,old));
+        if(!ok) {
+            tb_err("destination differs from transaction: /%s; repair before retrying apply",e->path+7);
+            return -1;
+        }
+    }
+    return 0;
 }
 static int apply(context *c,bool yes) {
     int have=readtx(c);
@@ -558,22 +672,20 @@ static int apply(context *c,bool yes) {
         if(state(c,"applying"))goto done;
     }
     if(!strcmp(c->tx.state,"applying")) {
-        if(version_check(c,c->tx.to,&m) || mountcheck(c,&m))goto done;
-        char ver[300],stage[340];
-    snprintf(ver,sizeof ver,"version/%s",c->tx.to);
+        if(version_check(c,c->tx.to,&m) || mountcheck(c,&m) || mountcheck(c,&oldm) || resume_check(c,&m,&oldm,false))goto done;
+        char stage[340];
     snprintf(stage,sizeof stage,"staging/%s",c->tx.id);
-        int v=directory(c->slot,ver,false),scratch=directory(c->slot,stage,false);
-        if(v<0 || scratch<0){if(v>=0)close(v);
+        int scratch=directory(c->slot,stage,false);
+        if(scratch<0 || staged_check(c,&m,scratch)){
     if(scratch>=0)close(scratch);
     goto done;
     }
         int failed=0;
         for(size_t i=0;i<m.n && !failed;i++)if(!strncmp(m.v[i].path,"placed/",7)) {
-            failed=replace(c,&m.v[i],v,scratch);
+            failed=replace(c,&m.v[i],scratch);
     tb_fault_file(i+1);
         }
-        close(v);
-    close(scratch);
+        close(scratch);
     if(failed)goto done;
         for(size_t i=oldm.n;i>0;i--) {
             const tb_entry_t *e=&oldm.v[i-1];
@@ -621,6 +733,7 @@ static int apply(context *c,bool yes) {
         if(atomic(c->state,"keep",keep,(size_t)n) || state(c,"activating") || syncall(c->slot))goto done;
     }
     if(!strcmp(c->tx.state,"activating")) {
+        if(version_check(c,c->tx.to,&m) || resume_check(c,&m,&oldm,true))goto done;
         if(c->tx.done>c->nsteps)goto done;
         for(size_t i=c->tx.done;i<c->nsteps;i++) {
             if(command(c,c->commands[i],"apply") && c->required[i]){r=TB_AFTER_FAILED;
@@ -662,7 +775,7 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
     if(have<0){r=TB_INTERRUPTED;
     goto done;
     }
-        printf("live: %s\n",cur);
+        if(print_status(&c,cur))goto done;
         if(have)printf("transaction: %s\nstate: %s\nfrom: %s\nto: %s\ncapture: -\n",c.tx.id,c.tx.state,c.tx.from,c.tx.to);
         r=have && strcmp(c.tx.state,"complete")?TB_INTERRUPTED:TB_OK;
         if(!strcmp(cmd,"check") && strcmp(cur,"-")) {
@@ -674,6 +787,13 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
     tb_manifest_free(&m);
         }
         goto done;
+    }
+    if(!strcmp(cmd,"apply") || !strcmp(cmd,"recover")) {
+        struct stat st;
+        if(fstatat(c.state,"transaction",&st,AT_SYMLINK_NOFOLLOW) && errno==ENOENT) {
+            r=TB_OK;
+            goto done;
+        }
     }
     char *statepath=tam_path_join(root,"var/lib/tamlinux/lock");
     c.lock=tam_fs_lock(statepath,5000);
