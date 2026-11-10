@@ -276,9 +276,24 @@ p f 0644 sha256:<64 hex> usr/share/man/man1/tam.1
 directories only, never links. Tree entries may be relative links that
 stay inside the tree, as before.
 
-**The bundle hash** is SHA-256 over `BUNDLE` without `hash` and `built`,
-then `MANIFEST`, then `SETTINGS`. A capture's hash covers `CAPTURE` and
-`FILES`.
+**Four identities**, each covering exactly this:
+
+| Identity | Covers |
+| --- | --- |
+| **input key** | the lock, the recipes and the build-environment identity (see "The build environment"); names a cache entry |
+| **bundle hash** | SHA-256 over `BUNDLE` without `hash` and `built`, then `MANIFEST`, then `SETTINGS`: the actual output |
+| **capture hash** | `CAPTURE` and `FILES`, whose lines carry each file's hash |
+| **transaction id** | one switch (see "The transaction") |
+
+A matching hash proves a bundle is intact, not that anyone approved it
+(see "Integrity is not permission").
+
+**Edited product files on export.** A workstation export (`capture -o`)
+refuses while installed product files differ from their bundle, and names
+them. With `--save-edits` it first makes a marked **derived** bundle (a new
+id, a `derived-from <bundle id>` line in `BUNDLE`, the edited files
+listed) and exports that, so it never ships the original bytes and calls
+them the running installation.
 
 ## The build environment
 
@@ -564,7 +579,10 @@ yet.
    that affects login or boot (see "Login and boot files"), list them and
    stop unless the user approves that exact list (`--approve-guarded
    <digest>`).
-5. **Stage, system part (root, through `pkexec`).** Unpack the product
+5. **Stage, system part (root, through `pkexec`).** First copy the bundle
+   file into root-owned staging and verify that copy; everything after
+   reads only the copy, so the file cannot be swapped between the check
+   and its use. Unpack the product
    tree into `version/<id>/` (on Btrfs, clone unchanged files from the
    current version), copy placed files into `staging/<id>/`, hash every
    copy, then `syncfs` once. The system record says **staging** throughout.
@@ -864,7 +882,7 @@ installed. Three layers keep it so:
 | `tam-bundle lock <component> <commit>` | Set one component's commit in a lock file | No |
 | `tam-bundle seal`, `verify <bundle>` | Write and check identity and file list | No |
 | `tam-bundle needs <bundle>` | Check the dependency list on this machine | No |
-| `tam-bundle capture [-o <file>]` | Capture the user's settings; with `-o`, write a workstation bundle | No |
+| `tam-bundle capture [-o <file>] [--save-edits]` | Capture the user's settings; with `-o`, write a private workstation bundle | No |
 | `tam-bundle install <bundle>` | Prepare a product or workstation bundle | Prepare's system part |
 | `tam-bundle back`, `restore <bundle>` | Prepare the previous or a named bundle, with `--product-only` or `--settings-only` | Prepare's system part |
 | `tam-bundle cancel` | Drop a switch in staging or ready | System part |
@@ -882,15 +900,28 @@ they do the root part and print what the user still has to run. Refusals
 (`126`, `127`) are explained. `tam-deploy` keeps the stage logic and calls
 these commands.
 
+**Integrity is not permission.** A privileged install runs only for the
+exact bundle hash the caller names (`--digest`; `tam-deploy` passes the one
+Fred approved for the stage), and its polkit action asks for
+administrator authentication. Only `apply` of a switch that an
+authorized prepare already made **ready** is password-free. Signatures for
+sharing bundles across machines can be added later without a server.
+
 ## Retention
 
 - **Always kept:** current, previous, the recovery anchor and anything
   pinned with `keep`.
 - **Unpacked:** current and previous only.
+- **Kept by reference:** anything reachable from the always-kept set, an
+  open transaction (both its products and its capture) and every retained
+  capture's base product, worked out under the lock.
+  `tam-bundle status --why <id>` says why an item is kept ("base of
+  capture fred@bosgame-2026-11-10-3f9a0c1b2d4e").
 - **Removed only on request:** `tam-bundle prune` lists what it would
   remove and the space it would free, and removes only with `--yes`. A
   plain prune keeps the five most recent product bundles and the five most
-  recent captures beyond the always-kept set. Nothing runs on a timer.
+  recent captures beyond the always-kept and referenced items. Nothing
+  runs on a timer.
 - After an install, tam-bundle mentions the space used when it passes a
   threshold (default 20 GB).
 
