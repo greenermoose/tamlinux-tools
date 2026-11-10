@@ -592,6 +592,14 @@ tam nut's and belongs to the rootstock:
 
 Both run the same `tam-bundle apply`. Neither is a bundle file.
 
+The boot trigger's ordering does not make logins wait for its success, and
+that is intended: logins must never depend on it, or a failed apply could
+lock the user out of the console needed to repair it. A failed apply leaves
+the record short of **complete**, so `tam-desktop` stays blocked (see
+"Agreement, not absence"), and `tam-start` shows a repair screen in place
+of the menu: what failed, `tam-bundle apply` to retry and `tam-bundle back`
+to roll back. The text console and the user's shell always work.
+
 **System part, `tam-bundle apply` (root).** Steps, under the lock:
 
 1. No record, or a record in **staging**: exit at once (a stat or two).
@@ -625,26 +633,33 @@ Both run the same `tam-bundle apply`. Neither is a bundle file.
    tenth of a second, that window is small and is accepted for the first
    version. A full guarantee would need the renames to happen only at
    boot, which Q1 ruled out.
-3. Set the system record to **applying** and sync.
-4. For each placed change: rename the staged file over the destination
+3. **Recheck and secure, still changing nothing live.** The rootstock may
+   have changed since prepare. Rerun the ownership check for every placed
+   path and the dependency check (one package-manager query and a stat per
+   dependency); either failure refuses with the full list, and the record
+   stays **ready**, so the old version keeps running. Then make sure every
+   placed file about to be replaced has a rollback copy: the old version's
+   `.placed/` normally holds it from that version's prepare, checked by
+   hash against `record`. Where it is missing or differs, copy (on Btrfs,
+   clone) the live file into `.placed/` and sync, with the live file left
+   in place. If that copy fails, refuse; the record stays **ready**.
+4. Set the system record to **applying** and sync.
+5. For each placed change: rename the staged file over the destination
    (`rename(2)` replaces it in one atomic step, so the path always shows a
-   whole old or a whole new file). The old version's `.placed/` already
-   holds the old copy from that version's prepare; apply first checks its
-   hash against `record`, and only when it is missing or differs moves the
-   live file into `.placed/` before the rename, so a rollback point always
-   exists. Placed files the new version no longer has are moved into the
-   old version's `.placed/`. `fsync` each changed directory.
-5. Replace `current` with a new link (`symlink` beside it, then `rename`
+   whole old or a whole new file, and step 3 guaranteed a rollback copy).
+   Placed files the new version no longer has are moved into the old
+   version's `.placed/`. `fsync` each changed directory.
+6. Replace `current` with a new link (`symlink` beside it, then `rename`
    over it) and `fsync` `/usr/lib/tamlinux`.
-6. Update `record`, `keep` (the old id becomes "previous"), `stat`, `log`;
+7. Update `record`, `keep` (the old id becomes "previous"), `stat`, `log`;
    set the system record to **activating**; `syncfs`.
-7. Run the system post-install steps the rootstock profile defines, marking
+8. Run the system post-install steps the rootstock profile defines, marking
    each done in the record as it succeeds. On systemd these are
    `system-daemon-reload`, `sysctl-apply` and `tmpfiles-create`
    (required) and `man-index` (optional); a runit profile has its own. A
    bundle names steps by these names and a step the profile lacks is
    reported, not guessed. Every step is safe to run twice.
-8. When every required step has succeeded, set the system record to
+9. When every required step has succeeded, set the system record to
    **complete**. A failed required step leaves it **activating** and is
    retried by the next apply. A failed optional step is logged and retried
    by `tam-bundle after`; it never blocks. Settings that only take effect
