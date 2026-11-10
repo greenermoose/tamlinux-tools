@@ -22,6 +22,7 @@ model, Fred's guiding prompts verbatim, the commits, and the decisions.
 | 2026-10-22 | Link `libtam` and its new portal library, `libtam-portal`, statically | Claude Code 2.1.307; `claude-opus-5-5` | [Session record](docs/ai/2026-10-22-libtam-portal-static.md) |
 | 2026-11-04 | Clarify repository purpose in README (no ROADMAP) | Cursor 3.27.22; `composer` | [Session record](docs/ai/2026-11-04-clarify-readme-purpose.md) |
 | 2026-11-09 | Field survey for `tam-bundle`; add `UPSTREAM.md` and `upstream/` | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-field-survey.md) |
+| 2026-11-09 | Design for `tam-bundle` | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-design.md) |
 
 The initial commit `18ef5de` predates this record. It was authored in an
 Antigravity session and carries that session's `AI-Tool` and `AI-Model`
