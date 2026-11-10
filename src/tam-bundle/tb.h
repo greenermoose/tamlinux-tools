@@ -129,8 +129,8 @@ typedef struct {
     size_t  n;
 } tb_keep_t;
 
-/* Open a slot. `state` NULL picks /var/lib/tam-bundle/<name> for root and
- * $XDG_STATE_HOME/tamlinux/tam-bundle/<name> otherwise. With `create`, make
+/* Open a slot. `state` NULL picks /var/lib/tam-bundle/<name> for a slot
+ * owned by root and $XDG_STATE_HOME/tamlinux/tam-bundle/<name> otherwise. With `create`, make
  * the slot, kept/ and state directories where missing. */
 int  tb_slot_open(tb_slot_t *s, const char *dir, const char *state, bool create);
 void tb_slot_close(tb_slot_t *s);

@@ -134,7 +134,7 @@ exchanged back into `current/`.
 - `saved/` — files saved before a switch replaced them (see "Files someone
   edited").
 
-For a slot run by a user other than root, state lives in
+For a slot owned by a user other than root, state lives in
 `$XDG_STATE_HOME/tamlinux/tam-bundle/<slot name>/`, following `libtam`'s
 per-command state path.
 

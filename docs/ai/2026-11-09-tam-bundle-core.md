@@ -38,7 +38,8 @@
   - `after`, to run post-install steps as the desktop user after a root
     switch;
   - the stat cache also records change time;
-  - user state follows `libtam`'s `$XDG_STATE_HOME/tamlinux/tam-bundle/`;
+  - state follows the slot's owner: `/var/lib/tam-bundle/` for a root-owned
+    slot, else `libtam`'s `$XDG_STATE_HOME/tamlinux/tam-bundle/`;
   - bundle files are opened with `openat2` (`RESOLVE_BENEATH`,
     `RESOLVE_NO_SYMLINKS`).
 - **Not yet:**

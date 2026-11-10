@@ -12,6 +12,25 @@ char *tb_state_path(const tb_slot_t *s, const char *leaf) {
     return tam_path_join(s->state, leaf);
 }
 
+/* True when the slot, or its nearest existing parent, belongs to root: such
+ * a slot keeps its state in the system state directory whoever reads it. */
+static bool owned_by_root(const char *dir) {
+    char *p = strdup(dir);
+    struct stat st;
+    bool root = true;
+    while (p) {
+        if (stat(p, &st) == 0) {
+            root = st.st_uid == 0;
+            break;
+        }
+        char *slash = strrchr(p, '/');
+        if (!slash || slash == p) break;
+        *slash = '\0';
+    }
+    free(p);
+    return root;
+}
+
 int tb_slot_open(tb_slot_t *s, const char *dir, const char *state, bool create) {
     memset(s, 0, sizeof *s);
     s->fd = s->lock_fd = -1;
@@ -31,7 +50,7 @@ int tb_slot_open(tb_slot_t *s, const char *dir, const char *state, bool create) 
 
     if (state) {
         s->state = strdup(state);
-    } else if (geteuid() == 0) {
+    } else if (owned_by_root(s->dir)) {
         s->state = tam_path_join(TB_SYSTEM_STATE, s->name);
     } else {
         char *xdg = tam_xdg_path(TAM_XDG_STATE, "tam-bundle", NULL, false);
