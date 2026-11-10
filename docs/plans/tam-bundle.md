@@ -367,7 +367,9 @@ fall back silently.
 `fstat`ed again; if its size or change time moved during the read, it is
 read again, up to three times, then reported. A file a program rewrites
 by itself (an editor's `settings.json`) is captured as it is at that
-moment.
+moment. A capture is coherent when no program is writing settings, which
+is normally true at a switch because the desktop is down; otherwise it is
+best-effort, says so, and names the files that changed while it was read.
 
 **Host marks.** On the host a capture was made on, everything applies. On
 another host:
@@ -475,14 +477,16 @@ yet.
    current version), copy placed files into `staging/<id>/`, hash every
    copy, then `syncfs` once. The system record says **staging** throughout.
    The old version stays unpacked and whole.
-6. **Stage, settings part (the user).** First capture the current settings
-   automatically (so nothing is lost and the switch can be undone by
-   rolling forward again). Then copy the files that will apply into
-   `~/.local/state/tamlinux/staging/`, sync, and write the user's record
-   in **staging**.
-7. **Publish.** Only when both parts are staged and synced, write both
-   records as **ready** (the user's first, then the system's), each
-   atomically and synced. Nothing in **staging** is ever applied.
+6. **Plan, settings part (the user).** Change nothing in home and stage no
+   settings files: the user keeps working, and edits made from now on must
+   not be lost. Do a dry run of the settings result and report it ("At the
+   switch: 2 files you edited have new defaults (bindings.lua,
+   mimeapps.list); you'll get .tamlinux-new copies"). Write the user's
+   record with the plan: an upgrade, or a restore of a named capture.
+7. **Publish.** Only when the system part is staged and synced and the
+   user's plan is written, write both records as **ready** (the user's
+   first, then the system's), each atomically and synced. Nothing in
+   **staging** is ever applied.
 8. **Tell the user**, warmly:
 
    ```text
@@ -604,12 +608,24 @@ Both run the same `tam-bundle apply`. Neither is a bundle file.
 **Settings part, `tam-bundle apply-settings` (the user).** Run by the
 session entry right after the system part, before the compositor; it never
 needs root, because captures hold only home files. It only proceeds when
-the system record is **complete** for the same transaction id. It takes
-the user's record through the same states: **applying** while it renames
-each staged file into place and syncs, **activating** while the user
-post-install steps run (`user-units-reload` is required), then
-**complete**. It never runs as root and never follows links out of the
-home directory.
+the system record is **complete** for the same transaction id. All
+settings work happens here, when the desktop is down, so nothing made
+after prepare is lost:
+
+1. Capture the current settings automatically. This is the latest state,
+   including edits made after prepare, and makes the switch undoable by
+   rolling forward again.
+2. Compute the result from the files as they are now: the three-way rule
+   for an upgrade, the named capture for a restore. A file that changed
+   since prepare's dry run is named in the message; its latest version is
+   in the capture from step 1.
+3. Stage the result in `~/.local/state/tamlinux/staging/` and sync, with
+   the user's record in **applying**; rename each file into place and
+   sync; then **activating** while the user post-install steps run
+   (`user-units-reload` is required); then **complete**.
+
+Settings are small home files, so this costs milliseconds. It never runs
+as root and never follows links out of the home directory.
 
 **Interruption.** Apply only moves files that prepare already wrote and
 synced, so recovery always goes forward: rerunning apply reads the
@@ -642,7 +658,8 @@ With nothing pending, nothing is printed and nothing measurable is spent.
 - `tam-bundle back` prepares the previous product version and the
   settings capture taken with it; `tam-bundle restore <bundle>` does the
   same for any retained bundle, forward or backward.
-- Both always capture the current settings first, automatically.
+- Both always capture the current settings first, automatically, at the
+  moment of the switch, not at prepare.
 - `--product-only` keeps the current settings with the other software;
   `--settings-only` restores a capture onto the current software. When
   the capture was taken with another product version, tam-bundle warns
