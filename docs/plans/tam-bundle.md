@@ -231,7 +231,8 @@ tool cc gcc 16.2.1
 tool tam-bundle 0.6.0
 host alex-desktop <host-id>
 needs tam-bundle >= 0.6.0
-needs file /usr/bin/Hyprland exact sha256:<64 hex>  arch=hyprland
+needs file /usr/bin/Hyprland >= 0.56               arch=hyprland
+needs file /usr/lib/libhyprbars.so                 arch=hyprland-plugin-hyprbars
 needs file /usr/bin/quickshell >= 0.3.0            arch=quickshell void=quickshell
 needs file /usr/lib/libdbus-1.so.3                 arch=dbus void=dbus
 needs file /usr/bin/python3 >= 3.12                arch=python void=python3
@@ -272,10 +273,17 @@ are the same on every rootstock and package names are not.
   package manager (`pacman -Qo`, `xbps-query -o`). A file no package owns
   (for example a build in `/usr/local`) is reported as "present, version
   unknown", a warning, not a refusal.
-- **Exact:** `exact sha256:<hash>` where only the very build will do. The
-  main case is Hyprland: the `fred.*` title-bar plugins are compiled against
-  one Hyprland build, so the bundle records the hash of the `Hyprland` it
-  was built against.
+- **Exact:** `exact sha256:<hash>` where only the very build will do,
+  which is only when Tamlinux itself compiles code against one build of a
+  third-party program. Nothing does today: the `fred.*` plugins are
+  Quickshell QML, and no Tamlinux program links to Hyprland's libraries.
+  The one plugin ABI-locked to a Hyprland build, the hyprbars title-bar
+  plugin, is third-party software from the rootstock and is listed like
+  any other dependency; keeping it matched to Hyprland is the rootstock's
+  job (on Arch, a machine-side pacman hook catches the mismatch). So a
+  rootstock update that brings a newer Hyprland leaves the bundle valid,
+  and a second workstation needs only a compatible Hyprland, not the same
+  build.
 - **tam-bundle itself:** `needs tam-bundle >= V` lets an older tam-bundle
   say "this bundle needs tam-bundle 0.6.0 or newer" and stop.
 - **Where the list comes from:** the recipe declares it (the bundle file's
@@ -812,10 +820,6 @@ proofs pass.
   typed again; the check must say which of them matter, and it must also
   catch processes running old `/usr/bin/tam-*` files, not only programs in
   the old version's tree.
-- **Hyprland updates and the exact pin:** after a rootstock update brings a
-  new Hyprland, the installed bundle no longer meets its `exact` line. A
-  defined step is needed, such as rebuilding only the plugins into a new
-  bundle, and the same pin limits which second workstations qualify.
 - **Apply's double rename:** step 4 moves the old file into `.placed/` and
   then renames the new one in, but `.placed/` already has the old copy
   from that version's prepare. Proposed: one rename of the staged file
