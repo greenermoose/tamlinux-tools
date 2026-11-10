@@ -34,6 +34,7 @@ first if they should become tools in this suite.
 | Command | Description | Dependencies |
 | :--- | :--- | :--- |
 | **`tam-file-select`** | File chooser via the desktop XDG Portal | Static `libtam-portal` / `libtam`; shared `libdbus-1` at runtime |
+| **`tam-bundle`** | Installs a named, versioned set of real files into a slot, records it, and switches between versions with rollback ([design](docs/plans/tam-bundle.md)). In development; not yet delivered by any assembly. | Static `libtam` 0.5.0 or later; libc only |
 
 Assemblies install `tam-file-select` on `PATH`. Product flows that call it
 include share (`tam-menu-share`) and theme branding image pick.
@@ -47,9 +48,31 @@ tam-file-select [--title <title>] [--multiple] [--directory] [--extensions "<ext
 Prints selected path(s), one per line. Exit `0` on pick, `1` if nothing was
 picked, `2` if the chooser failed to open.
 
+## Usage: `tam-bundle`
+
+```text
+tam-bundle seal <dir> --name N --version V [--source "COMPONENT COMMIT"]... [--after STEP]...
+tam-bundle verify <dir>
+tam-bundle [--slot DIR] switch <bundle dir>
+tam-bundle [--slot DIR] back [<bundle id>]
+tam-bundle [--slot DIR] status | check | where <path> | recover | prune [--yes]
+```
+
+`tam-bundle --help` lists every command and option. The default slot is
+`/usr/lib/tamlinux`; any directory works as a slot, so tests and private
+tools use slots of their own. Exit `0` on success, `1` when refused or a
+check finds problems, `2` on usage errors, `3` when a switch completed but a
+post-install step failed, and `4` when an interrupted switch needs
+`tam-bundle recover`.
+
+`make test` builds `bin/tam-bundle-test`, which honours test fault points,
+and runs `tests/tam-bundle/run.sh` in `$TAM_TEST_DIR` (default `$TMPDIR`).
+Run it on Btrfs and on ext4 directories to cover both file systems.
+
 ## Building and installation
 
-Links statically against an **installed** `libtam` 0.4.0 or later.
+Links statically against an **installed** `libtam`: 0.4.0 or later for
+`tam-file-select`, 0.5.0 or later for `tam-bundle`.
 `tam-file-select` uses the portal library via `pkg-config libtam-portal`
 (adds `libtam` and D-Bus). Install `libtam` first; if its prefix is outside
 pkg-config's default path:

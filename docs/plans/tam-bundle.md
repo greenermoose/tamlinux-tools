@@ -1,7 +1,11 @@
 # tam-bundle — design
 
-- **Status:** Draft for review. Nothing here is approved, and no code is
-  written until it is.
+- **Status:** Approved 2026-11-09. `tam-bundle` 0.1.0 implements the
+  formats, `seal`, `verify`, `needs`, `switch`, `back`, `recover`,
+  `status`, `check`, `where`, `keep`, `prune` and `after`, with the crash
+  and older-bundle tests. Still to come: `build` and `lock`, privilege
+  through `pkexec`, the `man-index` step, the man page and `tam` pages, and
+  the native adapter package.
 - **Component:** `tamlinux-tools`, its own version number, C on `libtam`,
   linked statically.
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
@@ -124,14 +128,15 @@ exchanged back into `current/`.
 - `log` — one line per switch, rollback, prune and post-install step.
 - `keep` — bundle ids that `prune` must not remove, each with a reason
   (current, previous, recovery anchor).
-- `stat/<bundle id>` — size, modification time and inode of each live
-  file, recorded after a switch, so a check can find edited files without
+- `stat/<bundle id>` — size, inode, modification time and change time
+  of each live file (a change time cannot be set back by hand), recorded after a switch, so a check can find edited files without
   hashing everything.
 - `saved/` — files saved before a switch replaced them (see "Files someone
   edited").
 
-For a slot under a home directory, state lives in
-`$XDG_STATE_HOME/tam-bundle/<slot name>/`.
+For a slot run by a user other than root, state lives in
+`$XDG_STATE_HOME/tamlinux/tam-bundle/<slot name>/`, following `libtam`'s
+per-command state path.
 
 **Fixed paths outside the slot** (session entry, PAM, polkit, system
 units, environment settings) do not belong to `tam-bundle`. The native
@@ -244,6 +249,7 @@ fixed rather than excused.
 | Command | What it does | Root for the product slot |
 | --- | --- | --- |
 | `tam-bundle build <recipes> <lock> -o <dir>` | Build a bundle from exact commits | No |
+| `tam-bundle seal <dir> --name N --version V ...` | Write `BUNDLE` and `MANIFEST` for a built tree; `build`'s last step, and how tests make bundles | No |
 | `tam-bundle verify <bundle>` | Check every file against `MANIFEST` and the bundle hash | No |
 | `tam-bundle needs <bundle>` | Report missing native commands or files, with package names | No |
 | `tam-bundle switch <bundle>` | Install the bundle and make it live | Yes |
@@ -255,6 +261,7 @@ fixed rather than excused.
 | `tam-bundle prune [--yes]` | List removable kept trees; remove only with `--yes` | Yes |
 | `tam-bundle recover` | Finish or undo an interrupted switch | Yes |
 | `tam-bundle lock <component> <commit>` | Set one component's commit in a lock file | No |
+| `tam-bundle after` | Run the live bundle's post-install steps as the invoking user | No |
 
 Every changing command takes `--slot <dir>` (default `/usr/lib/tamlinux`)
 and `--dry-run`. Every command runs `recover`'s check first and stops if a
@@ -292,8 +299,11 @@ Inputs: a verified bundle, the slot, the state directory.
    - file whose hash equals the live file's recorded hash: clone it from
      `current/` (`FICLONE`); where cloning is unsupported, copy it from the
      bundle;
-   - other files: copy from the bundle, hashing while copying, and stop on
-     a mismatch;
+   - other files: copy from the bundle, hash the copy, and stop on a
+     mismatch; bundle files are opened strictly beneath the bundle
+     directory (`openat2` with `RESOLVE_BENEATH` and
+     `RESOLVE_NO_SYMLINKS`), so a link swapped into a bundle cannot make
+     a root switch read files outside it;
    - link: create it.
    Then write `BUNDLE` and `MANIFEST`, set directory modes last, and call
    `syncfs` on the staging tree once, so every new file is on disk before

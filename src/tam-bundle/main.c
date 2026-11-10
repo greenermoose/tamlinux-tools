@@ -1,0 +1,467 @@
+/* tam-bundle command line. */
+#include "tb.h"
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+
+static const char usage_text[] =
+    "usage: tam-bundle [options] <command> [arguments]\n"
+    "\n"
+    "Commands:\n"
+    "  seal <dir> --name N --version V [...]   record a built tree as a bundle\n"
+    "  verify <dir>                 check a bundle, kept or live tree against its MANIFEST\n"
+    "  needs <dir>                  report missing native commands or files\n"
+    "  switch <dir>                 install a bundle and make it live\n"
+    "  back [<bundle id>]           make the previous (or named) kept tree live again\n"
+    "  status                       live bundle, previous, kept trees, interruptions\n"
+    "  check                        find changes in the live tree\n"
+    "  where <path>                 which bundle installed a file\n"
+    "  keep <bundle id> <reason>    protect a kept tree from prune\n"
+    "  unkeep <bundle id>           stop protecting it\n"
+    "  prune [--yes]                list removable kept trees; remove them with --yes\n"
+    "  recover                      finish or undo an interrupted switch\n"
+    "  after                        run the live bundle's post-install steps\n"
+    "\n"
+    "Options:\n"
+    "  --slot DIR      slot directory (default " TB_DEFAULT_SLOT ")\n"
+    "  --state DIR     state directory (default by user; see tam-bundle(1))\n"
+    "  --dry-run       say what would change, change nothing\n"
+    "  --full          hash every file instead of trusting unchanged file stats\n"
+    "  --save-edits    save changed live files before switching\n"
+    "  --quiet         print only errors\n"
+    "  --version, --help\n"
+    "\n"
+    "seal options: --name N --version V [--host H] [--source \"COMPONENT COMMIT\"]...\n"
+    "  [--tool \"NAME VERSION\"]... [--needs \"command|file TARGET [distro=pkg ...]\"]...\n"
+    "  [--after STEP]... [--built TIME]\n";
+
+static int usage(const char *why) {
+    if (why) tb_err("%s", why);
+    fputs(usage_text, why ? stderr : stdout);
+    return TB_USAGE;
+}
+
+typedef struct {
+    const char *slot, *state;
+    tb_switch_opts_t sw;
+    bool yes;
+    /* seal */
+    const char *name, *version, *host, *built;
+    const char *sources[64], *tools[64], *needs[64], *after[16];
+    size_t nsources, ntools, nneeds, nafter;
+    /* positional */
+    const char *args[4];
+    size_t nargs;
+} opts_t;
+
+/* ---- seal -------------------------------------------------------------- */
+
+static int cmd_seal(const opts_t *o) {
+    if (o->nargs != 2 || !o->name || !o->version) return usage("seal needs a directory, --name and --version");
+    const char *dir = o->args[1];
+    int dfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dfd < 0) {
+        tb_err("cannot open %s: %s", dir, strerror(errno));
+        return TB_FAIL;
+    }
+    struct stat st;
+    bool present = fstatat(dfd, "BUNDLE", &st, AT_SYMLINK_NOFOLLOW) == 0 ||
+                   fstatat(dfd, "MANIFEST", &st, AT_SYMLINK_NOFOLLOW) == 0;
+    close(dfd);
+    if (present) {
+        tb_err("%s already has a BUNDLE or MANIFEST; remove them to seal it again", dir);
+        return TB_FAIL;
+    }
+    tb_manifest_t m;
+    if (tb_manifest_build(dir, &m) != 0) return TB_FAIL;
+
+    char built[64];
+    if (o->built) {
+        snprintf(built, sizeof built, "%s", o->built);
+    } else {
+        time_t now = time(NULL);
+        struct tm tm;
+        gmtime_r(&now, &tm);
+        strftime(built, sizeof built, "%Y-%m-%dT%H:%M:%SZ", &tm);
+    }
+    /* Everything but the hash, in a fixed order; the hash covers it. */
+    tam_str_t head = tam_str_new("format 1\n");
+    head = tam_str_cat_printf(head, "name %s\nversion %s\n", o->name, o->version);
+    tam_str_t tail = tam_str_new(NULL);
+    for (size_t i = 0; i < o->nsources; i++) tail = tam_str_cat_printf(tail, "source %s\n", o->sources[i]);
+    for (size_t i = 0; i < o->ntools; i++) tail = tam_str_cat_printf(tail, "tool %s\n", o->tools[i]);
+    tail = tam_str_cat_printf(tail, "tool tam-bundle %s\n", TB_VERSION);
+    tail = tam_str_cat_printf(tail, "host %s\n", o->host ? o->host : "any");
+    for (size_t i = 0; i < o->nneeds; i++) tail = tam_str_cat_printf(tail, "needs %s\n", o->needs[i]);
+    for (size_t i = 0; i < o->nafter; i++) tail = tam_str_cat_printf(tail, "after %s\n", o->after[i]);
+    tail = tam_str_cat_printf(tail, "built %s\n", built);
+
+    tam_str_t unhashed = tam_str_dup(head);
+    unhashed = tam_str_cat(unhashed, tail);
+    char hash[TB_HASH_LEN + 1];
+    tb_bundle_hash(unhashed, tam_str_len(unhashed), m.text, m.len, hash);
+    tam_str_t text = tam_str_dup(head);
+    text = tam_str_cat_printf(text, "hash %s\n", hash);
+    text = tam_str_cat(text, tail);
+    tam_str_free(head);
+    tam_str_free(tail);
+    tam_str_free(unhashed);
+
+    int result = TB_FAIL;
+    tb_bundle_t b;
+    if (text && tb_bundle_parse(text, tam_str_len(text), "the new BUNDLE", &b) == 0) {
+        char *mpath = tam_path_join(dir, "MANIFEST"), *bpath = tam_path_join(dir, "BUNDLE");
+        /* MANIFEST first: a tree with a BUNDLE always has its MANIFEST. */
+        if (tam_fs_write_atomic(mpath, m.text, m.len, 0644) &&
+            tam_fs_write_atomic(bpath, text, tam_str_len(text), 0644)) {
+            tb_note("sealed %s as %s (%zu entries)", dir, b.id, m.n);
+            result = TB_OK;
+        } else {
+            tb_err("cannot write the records into %s: %s", dir, strerror(errno));
+        }
+        free(mpath);
+        free(bpath);
+        tb_bundle_free(&b);
+    }
+    tam_str_free(text);
+    tb_manifest_free(&m);
+    return result;
+}
+
+/* ---- verify, needs, check ---------------------------------------------- */
+
+static int cmd_verify(const opts_t *o) {
+    if (o->nargs != 2) return usage("verify needs a directory");
+    tb_bundle_t b;
+    tb_manifest_t m;
+    if (tb_tree_read(AT_FDCWD, o->args[1], &b, &m) != 0) return TB_FAIL;
+    tb_check_t c = {0};
+    int r = tb_tree_check(o->args[1], &m, NULL, true, &c);
+    size_t problems = c.edited + c.missing + c.extra;
+    if (r == 0 && problems == 0) tb_note("%s: %s verified, %zu entries", o->args[1], b.id, m.n);
+    else if (r == 0) tb_err("%s: %zu edited, %zu missing, %zu extra", o->args[1], c.edited, c.missing, c.extra);
+    tb_check_free(&c);
+    tb_bundle_free(&b);
+    tb_manifest_free(&m);
+    return r == 0 && problems == 0 ? TB_OK : TB_FAIL;
+}
+
+static int cmd_needs(const opts_t *o) {
+    if (o->nargs != 2) return usage("needs needs a directory");
+    tb_bundle_t b;
+    tb_manifest_t m;
+    if (tb_tree_read(AT_FDCWD, o->args[1], &b, &m) != 0) return TB_FAIL;
+    size_t missing = tb_needs_check(&b, true);
+    if (!missing) tb_note("%s: all %zu native needs are present", b.id, b.nneeds);
+    tb_bundle_free(&b);
+    tb_manifest_free(&m);
+    return missing ? TB_FAIL : TB_OK;
+}
+
+static int cmd_check(tb_slot_t *s, const opts_t *o) {
+    char cur[256];
+    if (tb_current_id(s, cur) != 0) return TB_FAIL;
+    if (strcmp(cur, "-") == 0) {
+        tb_note("%s has no live bundle", s->dir);
+        return TB_OK;
+    }
+    tb_bundle_t b;
+    tb_manifest_t m;
+    if (tb_tree_read(s->fd, "current", &b, &m) != 0) return TB_FAIL;
+    char leaf[300];
+    snprintf(leaf, sizeof leaf, "stat/%s", cur);
+    char *stat_path = tb_state_path(s, leaf), *live = tam_path_join(s->dir, "current");
+    tb_stats_t st;
+    tb_stats_read(stat_path, &st);
+    tb_check_t c = {0};
+    int r = tb_tree_check(live, &m, &st, o->sw.full, &c);
+    size_t problems = c.edited + c.missing + c.extra;
+    if (r == 0 && !problems) tb_note("%s/current matches %s", s->dir, cur);
+    else if (r == 0) tb_err("%s/current: %zu edited, %zu missing, %zu extra", s->dir, c.edited, c.missing, c.extra);
+    tb_check_free(&c);
+    tb_stats_free(&st);
+    free(stat_path);
+    free(live);
+    tb_bundle_free(&b);
+    tb_manifest_free(&m);
+    return r == 0 && !problems ? TB_OK : TB_FAIL;
+}
+
+/* ---- status, where ----------------------------------------------------- */
+
+static char **kept_ids(const tb_slot_t *s, size_t *n) {
+    *n = 0;
+    int kfd = openat(s->fd, "kept", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    DIR *dir = kfd >= 0 ? fdopendir(kfd) : NULL;
+    if (!dir) {
+        if (kfd >= 0) close(kfd);
+        return NULL;
+    }
+    char **ids = NULL;
+    struct dirent *de;
+    while ((de = readdir(dir)) != NULL) {
+        if (de->d_name[0] == '.') continue;
+        char **grown = realloc(ids, (*n + 1) * sizeof *ids);
+        if (!grown) break;
+        ids = grown;
+        ids[(*n)++] = strdup(de->d_name);
+    }
+    closedir(dir);
+    return ids;
+}
+
+static void free_ids(char **ids, size_t n) {
+    for (size_t i = 0; i < n; i++) free(ids[i]);
+    free(ids);
+}
+
+static int cmd_status(tb_slot_t *s) {
+    char cur[256];
+    if (tb_current_id(s, cur) != 0) return TB_FAIL;
+    printf("slot:      %s\nstate:     %s\n", s->dir, s->state);
+    printf("live:      %s\n", strcmp(cur, "-") == 0 ? "(none)" : cur);
+    tb_keep_t k;
+    if (tb_keep_read(s, &k) != 0) return TB_FAIL;
+    const char *prev = tb_keep_previous(&k);
+    printf("previous:  %s\n", prev ? prev : "(none)");
+    size_t n;
+    char **ids = kept_ids(s, &n);
+    for (size_t i = 0; i < n; i++) {
+        const char *reason = tb_keep_reason(&k, ids[i]);
+        printf("kept:      %s (%s)\n", ids[i], reason ? reason : "not protected; prune removes it");
+    }
+    free_ids(ids, n);
+    tb_keep_free(&k);
+    int result = TB_OK;
+    tb_intent_t it;
+    int have = tb_intent_read(s, &it);
+    if (have != 0) {
+        if (have > 0)
+            printf("interrupted: %s to %s from %s; run `tam-bundle recover`\n", it.op, it.to, it.from);
+        result = TB_INTERRUPTED;
+    }
+    char *log = tb_state_path(s, "log");
+    size_t len;
+    char *text = log ? tb_read_at(AT_FDCWD, log, &len) : NULL;
+    if (text && len > 1) {
+        text[len - 1] = '\0';
+        char *last = strrchr(text, '\n');
+        printf("last:      %s\n", last ? last + 1 : text);
+    }
+    free(text);
+    free(log);
+    return result;
+}
+
+static int cmd_where(tb_slot_t *s, const opts_t *o) {
+    if (o->nargs != 2) return usage("where needs a path");
+    const char *path = o->args[1];
+    char *live = tam_path_join(s->dir, "current");
+    size_t llen = strlen(live);
+    bool inside = strncmp(path, live, llen) == 0 && path[llen] == '/';
+    const char *rel = inside ? path + llen + 1 : NULL;
+    free(live);
+    if (!rel || !tam_path_is_safe_rel(rel)) {
+        tb_err("%s is not in the live tree of slot %s", path, s->dir);
+        return TB_FAIL;
+    }
+    tb_bundle_t b;
+    tb_manifest_t m;
+    if (tb_tree_read(s->fd, "current", &b, &m) != 0) return TB_FAIL;
+    const tb_entry_t *e = tb_manifest_find(&m, rel);
+    int result = TB_FAIL;
+    if (!e) {
+        tb_err("%s is in the live tree but not in %s's MANIFEST", path, b.id);
+    } else {
+        printf("%s\n  bundle:  %s (%s %s)\n  record:  %c %s\n", path, b.id, b.name, b.version, e->type, e->value);
+        result = TB_OK;
+    }
+    tb_bundle_free(&b);
+    tb_manifest_free(&m);
+    return result;
+}
+
+/* ---- keep, unkeep, prune ----------------------------------------------- */
+
+static bool kept_exists(const tb_slot_t *s, const char *id) {
+    char rel[300];
+    snprintf(rel, sizeof rel, "kept/%s", id);
+    struct stat st;
+    return tb_valid_name(id) && fstatat(s->fd, rel, &st, AT_SYMLINK_NOFOLLOW) == 0;
+}
+
+static int cmd_keep(tb_slot_t *s, const opts_t *o, bool keep) {
+    if ((keep && o->nargs != 3) || (!keep && o->nargs != 2))
+        return usage(keep ? "keep needs a bundle id and a reason" : "unkeep needs a bundle id");
+    const char *id = o->args[1];
+    if (keep && strcmp(o->args[2], "previous") == 0) return usage("\"previous\" is set by switch and back");
+    if (tb_slot_lock(s) != 0) return TB_FAIL;
+    if (keep && !kept_exists(s, id)) {
+        tb_err("%s is not kept in %s/kept", id, s->dir);
+        return TB_FAIL;
+    }
+    tb_keep_t k;
+    if (tb_keep_read(s, &k) != 0) return TB_FAIL;
+    if (keep) tb_keep_set(&k, id, o->args[2]);
+    else tb_keep_drop(&k, id);
+    int r = o->sw.dry_run ? 0 : tb_keep_write(s, &k);
+    tb_keep_free(&k);
+    if (r != 0) return TB_FAIL;
+    if (!o->sw.dry_run) tb_log(s, keep ? "keep %s %s" : "unkeep %s", id, keep ? o->args[2] : "");
+    tb_note("%s%s %s", o->sw.dry_run ? "would " : "", keep ? "keep" : "no longer keep", id);
+    return TB_OK;
+}
+
+static int cmd_prune(tb_slot_t *s, const opts_t *o) {
+    if (tb_slot_lock(s) != 0) return TB_FAIL;
+    tb_keep_t k;
+    if (tb_keep_read(s, &k) != 0) return TB_FAIL;
+    size_t n;
+    char **ids = kept_ids(s, &n);
+    size_t removable = 0;
+    int result = TB_OK;
+    for (size_t i = 0; i < n; i++) {
+        if (tb_keep_reason(&k, ids[i])) continue;
+        removable++;
+        char rel[300];
+        snprintf(rel, sizeof rel, "kept/%s", ids[i]);
+        char *dir = tam_path_join(s->dir, rel);
+        long long bytes = tb_tree_bytes(dir);
+        free(dir);
+        if (!o->yes || o->sw.dry_run) {
+            printf("removable: %s (%.1f MB)\n", ids[i], (double)bytes / 1e6);
+            continue;
+        }
+        if (tb_remove_tree(s, rel) == 0) {
+            char leaf[300];
+            snprintf(leaf, sizeof leaf, "stat/%s", ids[i]);
+            char *sp = tb_state_path(s, leaf);
+            if (sp) unlink(sp);
+            free(sp);
+            tb_log(s, "pruned %s", ids[i]);
+            tb_note("removed %s", ids[i]);
+        } else {
+            tb_err("cannot remove %s/%s: %s", s->dir, rel, strerror(errno));
+            result = TB_FAIL;
+        }
+    }
+    free_ids(ids, n);
+    tb_keep_free(&k);
+    if (!removable) tb_note("nothing to prune in %s", s->dir);
+    else if (!o->yes || o->sw.dry_run)
+        tb_note("sizes are the files' allocated size; on Btrfs, extents shared with other trees are "
+                "freed only when no tree uses them, so less space may come back. "
+                "Run `tam-bundle prune --yes` to remove them.");
+    return result;
+}
+
+static int cmd_after(tb_slot_t *s) {
+    char cur[256];
+    if (tb_current_id(s, cur) != 0) return TB_FAIL;
+    if (strcmp(cur, "-") == 0) {
+        tb_note("%s has no live bundle", s->dir);
+        return TB_OK;
+    }
+    tb_bundle_t b;
+    tb_manifest_t m;
+    if (tb_tree_read(s->fd, "current", &b, &m) != 0) return TB_FAIL;
+    int r = tb_run_after(s, &b);
+    tb_bundle_free(&b);
+    tb_manifest_free(&m);
+    return r;
+}
+
+/* ---- main -------------------------------------------------------------- */
+
+static bool add(const char **list, size_t *n, size_t cap, const char *v) {
+    if (*n >= cap) return false;
+    list[(*n)++] = v;
+    return true;
+}
+
+int main(int argc, char **argv) {
+    opts_t o = {0};
+    o.slot = TB_DEFAULT_SLOT;
+    for (int i = 1; i < argc; i++) {
+        const char *a = argv[i];
+        const char *v = i + 1 < argc ? argv[i + 1] : NULL;
+#define VALUE() do { if (!v) return usage("an option is missing its value"); i++; } while (0)
+        if (strcmp(a, "--help") == 0 || strcmp(a, "-h") == 0) {
+            usage(NULL);
+            return TB_OK;
+        }
+        /* Alone, --version prints this program's version; with a value it is
+         * seal's bundle version. */
+        else if (strcmp(a, "--version") == 0 && argc == 2) {
+            printf("tam-bundle %s (record format %d)\n", TB_VERSION, TB_FORMAT);
+            return TB_OK;
+        }
+        else if (strcmp(a, "--slot") == 0) { VALUE(); o.slot = v; }
+        else if (strcmp(a, "--state") == 0) { VALUE(); o.state = v; }
+        else if (strcmp(a, "--dry-run") == 0) o.sw.dry_run = true;
+        else if (strcmp(a, "--full") == 0) o.sw.full = true;
+        else if (strcmp(a, "--save-edits") == 0) o.sw.save_edits = true;
+        else if (strcmp(a, "--quiet") == 0) tb_quiet = true;
+        else if (strcmp(a, "--yes") == 0) o.yes = true;
+        else if (strcmp(a, "--name") == 0) { VALUE(); o.name = v; }
+        else if (strcmp(a, "--version") == 0) { VALUE(); o.version = v; }
+        else if (strcmp(a, "--host") == 0) { VALUE(); o.host = v; }
+        else if (strcmp(a, "--built") == 0) { VALUE(); o.built = v; }
+        else if (strcmp(a, "--source") == 0) { VALUE(); if (!add(o.sources, &o.nsources, 64, v)) return usage("too many --source"); }
+        else if (strcmp(a, "--tool") == 0) { VALUE(); if (!add(o.tools, &o.ntools, 64, v)) return usage("too many --tool"); }
+        else if (strcmp(a, "--needs") == 0) { VALUE(); if (!add(o.needs, &o.nneeds, 64, v)) return usage("too many --needs"); }
+        else if (strcmp(a, "--after") == 0) { VALUE(); if (!add(o.after, &o.nafter, 16, v)) return usage("too many --after"); }
+        else if (a[0] == '-' && a[1] == '-') { tb_err("unknown option %s", a); return TB_USAGE; }
+        else if (o.nargs < 4) o.args[o.nargs++] = a;
+        else return usage("too many arguments");
+#undef VALUE
+    }
+    if (!o.nargs) return usage("no command given");
+    const char *cmd = o.args[0];
+
+    if (strcmp(cmd, "seal") == 0) return cmd_seal(&o);
+    if (strcmp(cmd, "verify") == 0) return cmd_verify(&o);
+    if (strcmp(cmd, "needs") == 0) return cmd_needs(&o);
+
+    static const char *const changing[] = {"switch", "back", "recover", "keep", "unkeep", "prune", NULL};
+    static const char *const reading[] = {"status", "check", "where", "after", NULL};
+    bool changes = false, known = false;
+    for (int i = 0; changing[i]; i++) if (strcmp(cmd, changing[i]) == 0) changes = known = true;
+    for (int i = 0; reading[i]; i++) if (strcmp(cmd, reading[i]) == 0) known = true;
+    if (!known) {
+        tb_err("unknown command %s", cmd);
+        return TB_USAGE;
+    }
+    if (changes && !o.sw.dry_run && access(o.slot, F_OK) == 0 && access(o.slot, W_OK) != 0) {
+        tb_err("slot %s is not writable by you; run tam-bundle with pkexec or sudo", o.slot);
+        return TB_FAIL;
+    }
+
+    tb_slot_t s;
+    bool create = changes && !o.sw.dry_run && (strcmp(cmd, "switch") == 0);
+    if (tb_slot_open(&s, o.slot, o.state, create) != 0) {
+        tb_slot_close(&s);
+        return TB_FAIL;
+    }
+    int r;
+    if (strcmp(cmd, "switch") == 0) {
+        r = o.nargs == 2 ? tb_switch(&s, o.args[1], &o.sw) : usage("switch needs a bundle directory");
+    } else if (strcmp(cmd, "back") == 0) {
+        r = o.nargs <= 2 ? tb_back(&s, o.nargs == 2 ? o.args[1] : NULL, &o.sw) : usage("back takes at most one bundle id");
+    } else if (strcmp(cmd, "recover") == 0) {
+        r = tb_slot_lock(&s) == 0 ? tb_recover(&s, o.sw.dry_run, NULL) : TB_FAIL;
+        if (r == TB_OK) tb_note("%s is clean", s.dir);
+    } else if (strcmp(cmd, "keep") == 0) r = cmd_keep(&s, &o, true);
+    else if (strcmp(cmd, "unkeep") == 0) r = cmd_keep(&s, &o, false);
+    else if (strcmp(cmd, "prune") == 0) r = cmd_prune(&s, &o);
+    else if (strcmp(cmd, "status") == 0) r = cmd_status(&s);
+    else if (strcmp(cmd, "check") == 0) r = cmd_check(&s, &o);
+    else if (strcmp(cmd, "where") == 0) r = cmd_where(&s, &o);
+    else r = cmd_after(&s);
+    tb_slot_close(&s);
+    return r;
+}

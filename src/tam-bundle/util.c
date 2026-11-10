@@ -1,0 +1,69 @@
+#include "tb.h"
+#include <errno.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+bool tb_quiet;
+
+char *tb_read_at(int dirfd, const char *rel, size_t *len) {
+    int fd = openat(dirfd, rel, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return NULL;
+    size_t cap = 4096, n = 0;
+    char *buf = malloc(cap + 1);
+    while (buf) {
+        if (n == cap) {
+            char *grown = realloc(buf, cap * 2 + 1);
+            if (!grown) break;
+            buf = grown;
+            cap *= 2;
+        }
+        ssize_t r = read(fd, buf + n, cap - n);
+        if (r < 0 && errno == EINTR) continue;
+        if (r < 0) break;
+        if (r == 0) {
+            close(fd);
+            buf[n] = '\0';
+            if (len) *len = n;
+            return buf;
+        }
+        n += (size_t)r;
+    }
+    int saved = errno;
+    free(buf);
+    close(fd);
+    errno = saved ? saved : ENOMEM;
+    return NULL;
+}
+
+void tb_err(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    fputs("tam-bundle: ", stderr);
+    vfprintf(stderr, fmt, ap);
+    fputc('\n', stderr);
+    va_end(ap);
+}
+
+void tb_note(const char *fmt, ...) {
+    if (tb_quiet) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    putchar('\n');
+    va_end(ap);
+}
+
+#include <linux/openat2.h>
+#include <sys/syscall.h>
+
+int tb_open_beneath(int dirfd, const char *rel) {
+    struct open_how how = {
+        .flags = O_RDONLY | O_NOFOLLOW | O_CLOEXEC,
+        .resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS,
+    };
+    long fd = syscall(SYS_openat2, dirfd, rel, &how, sizeof how);
+    if (fd < 0 && errno == ENOSYS) return openat(dirfd, rel, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    return (int)fd;
+}
