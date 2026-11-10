@@ -1,747 +1,698 @@
 # tam-bundle — design
 
-- **Status:** Approved 2026-11-09. `tam-bundle` 0.1.0 implemented the
-  formats, `seal`, `verify`, `needs`, `switch`, `back`, `recover`,
-  `status`, `check`, `where`, `keep`, `prune` and `after`, with the crash
-  and older-bundle tests; 0.2.0 adds `build` and `lock`; 0.3.0 adds
-  privilege through `pkexec` and the polkit action, and 0.3.1 records the
-  user's session-step results; 0.4.0 builds the manual index into the
-  bundle (`index man`). The manual page `man/tam-bundle.1` is installed
-  with it and checked against `--help` by `make test`, and the `tam` corpus
-  has a page. 0.4.1 makes every changing command recover first (see
-  "Interruption recovery"). 0.5.0 adds explicit make and install targets,
-  pinned packaging files and the packaging source commit. 0.5.1 makes dry-run
-  planning read-only even before the first slot/state directory exists;
-  0.5.2 makes the state lock readable to those plans. The native adapter and
-  full recipes are now implemented in
-  [tamlinux-packages](https://github.com/greenermoose/tamlinux-packages/blob/develop/docs/bundles.md).
-  Real product-slot install, switch, full verification, rollback and forward
-  switch passed. The slot remains dormant while the previous desktop
-  delivery runs. Daily cutover and the tam-deploy back end remain migration
-  work; they are not completed by the standalone tool's bring-up.
+- **Status:** Revised 2026-11-10 for the developer's requirements of that
+  day; awaiting his review. The earlier design (approved 2026-11-09)
+  installed everything into one slot, `/usr/lib/tamlinux/current/`, put
+  `current/bin` on `PATH`, swapped whole trees with
+  `renameat2(RENAME_EXCHANGE)` and left personal configuration out. The
+  code implementing it (`tam-bundle` 0.1.0 to 0.5.2) passed real install,
+  switch, rollback and forward switch in a dormant slot; that remains
+  evidence for the parts this design keeps. What changes, what stays and
+  what goes is listed in "From the earlier design". Git keeps the earlier
+  text.
 - **Component:** `tamlinux-tools`, its own version number, C on `libtam`,
   linked statically.
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
   switching](../../upstream/2026-11-09-file-bundles-and-atomic-switch.md).
-  Its seven candidate design elements are taken up below; one is changed
-  (element 5, see "Files someone edited").
 
-## The problem
+## What tam-bundle is for
 
-Tamlinux is a set of its own files: commands, the desktop shell, plugins,
-data, manual pages and user units. Today Nix builds them and Home Manager
-links them into the home directory from the Nix store. That works, but:
+One bundle describes and carries an exact Tamlinux installation: how it was
+built, the files it installs, the settings that make up the workstation
+experience, the third-party software it expects to find, and how its parts
+are activated together. With it the developer can:
 
-- every installed file is a symlink into a store, so "where does this file
-  come from?" is a chase through links;
-- it brings a build daemon and sockets that Tamlinux otherwise avoids;
-- a switch evaluates a whole language and takes minutes;
-- most of what Nix does (complete dependency closures, binary caches,
-  remote builders) Tamlinux does not need, because third-party software
-  comes from the distribution's own packages.
+- build a version of Tamlinux from exact commits;
+- capture a working workstation, settings included, into a bundle;
+- carry that bundle to another Tamlinux workstation and install it there;
+- roll forward and backward to any retained bundle;
+- never be left with a half-installed system in use.
 
-What Tamlinux needs is smaller: package a coherent set of files built from
-exact commits, mark it as one thing with a name, a version and a hash,
-install it as real files in real folders, record what was installed, and
-switch between versions with rollback.
+Tamlinux is system software, so it installs the way system software has on
+Linux for decades: commands in `/usr/bin`, private files under
+`/usr/lib/tamlinux`, shared data in its usual `/usr/share` places, and
+nothing in `/usr/local`, which belongs to the machine's administrator.
+
+It replaces Nix and Home Manager for Tamlinux, without their store, symlink
+chains, daemon or language.
 
 ## Requirements
 
-1. **One bundle, one name.** A bundle has a name, a version, the exact
-   source commits it was built from, and one content hash over all of it.
-   The same sources give the same hash.
-2. **Real files.** Installed files are real files at their final paths. No
-   store to look through, no symlink chains.
-3. **A readable record.** Plain text lists every installed file with its
-   bundle, version and hash.
-4. **Switch and roll back.** A switch either completes or leaves the old
-   files in place. Rollback is one command.
-5. **Nothing in the background.** No daemon, socket, timer or polling. It
-   runs when typed and exits. No network unless asked.
-6. **Fast.** A switch with nothing to rebuild takes seconds.
-7. **Same on Arch and Void.** No dependence on pacman or xbps internals.
-   It checks that needed native packages are present and names the missing
-   ones.
-8. **Safe with the user's files.** It never destroys a file it did not
-   install. It refuses a bundle built for a different host.
-9. **Small post-install steps, by name.** A fixed list of named steps, each
-   recorded. No arbitrary scripts.
-10. **Ours.** C on `libtam`, statically linked, with a man page, `tam`
-    pages and its own tests.
+1. **Standard places.** Every command Tamlinux installs is the actual
+   executable in `/usr/bin`: never a link, never anywhere else. Files that
+   other programs find by a standard path (manual pages, desktop entries,
+   systemd units, polkit actions, fontconfig and environment drop-ins) are
+   real files in those places. Everything else, the bulk of the product,
+   lives under `/usr/lib/tamlinux`.
+2. **Links switch versions; nothing is found through them by hand.** The
+   product tree sits in `/usr/lib/tamlinux/version/<id>/`, reached through
+   one link, `/usr/lib/tamlinux/current -> version/<id>`. No other links
+   are needed to find a Tamlinux file.
+3. **A plain PATH.** Tamlinux adds no directory of its own to `PATH`.
+   `PATH` is `~/.local/bin`, `/usr/local/bin`, `/usr/bin`, plus whatever the
+   rootstock adds itself.
+4. **One bundle, one identity.** A product bundle has a name, a version,
+   the exact source commits, its recipe and one content hash. A settings
+   capture has its own hash, so two captures of one version differ.
+5. **Never half-baked.** A new version is prepared while the user works and
+   switched in at the next login, before the graphical session starts. An
+   interrupted switch is finished before any session starts. No reboot.
+6. **Dependencies are listed, not carried.** A bundle contains the Tamlinux
+   software, a list of the third-party files it expects and where, and a
+   recipe for installing the Tamlinux software. It never carries Hyprland,
+   Quickshell or their libraries. The rootstock only has to let tam-bundle
+   run; tam-bundle checks the list, names what is missing, and the user
+   resolves it. A bundle is as portable as that check.
+7. **Settings are part of the bundle.** The settings that make up the
+   Tamlinux experience are captured and restored with the product. Big
+   application state is left out. Secrets are never captured.
+8. **Hosts.** A bundle knows the host it was made on. On that host
+   everything applies. On another host, host-specific settings are left out
+   and the common ones apply, so the user's own settings follow them.
+9. **Three owners.** Every file belongs to the rootstock (its own package
+   manager), to Tamlinux (tam-bundle's record) or to neither. tam-bundle
+   writes only its own files, refuses before changing anything if a path
+   it would write belongs to someone else, and leaves everything else
+   alone, wherever it is.
+10. **Nothing in the background.** No daemon, socket, timer or polling. It
+    runs when invoked and exits. No network unless asked.
+11. **Fast and cheap.** Nothing to do costs a stat or two at login.
+    Preparing a version with nothing to rebuild takes seconds. Disk is
+    spent to save CPU and time.
+12. **Ours.** C on `libtam`, statically linked, with a man page, `tam`
+    pages and its own tests, including the crash and older-bundle tests.
 
-**Out of scope:** a general package manager for third-party software,
-building third-party software, binary caches, remote servers, and a user's
-own configuration files (see "Personal configuration").
-
-## Verified first: exchanging two directories
-
-The design rests on `renameat2(RENAME_EXCHANGE)`, which swaps two existing
-paths in one step. A small C probe was run on Linux 7.2 on Btrfs and on
-ext4, both mounted normally and writable without root. Both passed every
-check:
-
-- two non-empty directory trees exchange in one call;
-- afterwards the live path holds only the new tree, and the old tree is
-  complete at the other path;
-- a file opened before the exchange still reads the old contents;
-- exchanging again restores the old tree;
-- an exchange with a missing path fails with `ENOENT`, rather than turning
-  into a plain move;
-- an exchange across filesystems fails with `EXDEV`.
-
-The same probe tested file clones (`FICLONE`, "reflinks"): supported on
-Btrfs, `EOPNOTSUPP` on ext4. The design therefore clones on Btrfs and
-copies elsewhere.
-
-**Consequence for the layout:** both paths in an exchange must be on the
-same filesystem, and on Btrfs in the same subvolume. Keeping the live tree,
-the staging tree and the kept trees under one parent directory guarantees
-that.
+**Out of scope:** a general package manager; building or shipping
+third-party software; binary caches and remote servers; backups (restic
+keeps those, including everything a capture leaves out).
 
 ## Words used here
 
-- **Bundle:** a built set of files plus its identity and file list, ready
-  to install. It is a directory; it can be copied anywhere and verified.
-- **Slot:** the directory a bundle is installed into. The Tamlinux product
-  uses the slot `/usr/lib/tamlinux`. Tests and private tools can use other
-  slots, including ones under a home directory that need no root.
-- **Live tree:** `<slot>/current/`, the files in use.
-- **Kept tree:** a previous live tree kept whole for rollback, at
-  `<slot>/kept/<bundle id>/`.
-- **Bundle id:** `<name>-<version>-<first 12 hex digits of the hash>`, for
-  example `tamlinux-0.7.0-3f9a0c1b2d4e`.
+- **Rootstock:** the base distribution (Arch today, Void later) with its
+  own package manager.
+- **Product bundle:** a built version of the Tamlinux software, ready to
+  install: its identity, file list, dependency list and files.
+- **Settings capture:** one user's Tamlinux settings at one moment, with
+  their host marks.
+- **Workstation bundle:** a product bundle plus a settings capture; what
+  "bundle this up" produces and what is carried to another workstation.
+- **Product tree:** the part of a product bundle installed under
+  `/usr/lib/tamlinux/version/<id>/`.
+- **Placed files:** the part installed at standard paths outside the
+  product tree (`/usr/bin/tam`, `/usr/share/man/man1/tam.1`, ...).
+- **Bundle id:** `<name>-<version>-<first 12 hex digits of the hash>`,
+  for example `tamlinux-0.7.0-3f9a0c1b2d4e`. A capture id is
+  `<user>@<host>-<date>-<12 hex>`.
+- **Prepare** stages and verifies a bundle while the user works.
+  **Apply** switches it in when no session is running.
 
 ## Where things live
 
-**The product slot, `/usr/lib/tamlinux/`** (one Tamlinux-owned namespace
-under `/usr`):
+**Placed files** (real files, owned in tam-bundle's record):
 
-- `current/` — the live tree. Real directories and real files:
-  - `current/bin/` — commands; this directory goes on `PATH`.
-  - `current/lib/` — private programs, QML modules, plugins.
-  - `current/share/` — data, desktop entries, icons, fonts, manual pages
-    (`current/share/man`), user units (`current/share/systemd/user`).
-  - `current/BUNDLE` and `current/MANIFEST` — the identity and file list
-    of the bundle that is live. Because they are inside the tree, they
-    change in the same step as the files, so the live tree always says
-    exactly what it is.
-- `kept/<bundle id>/` — previous trees, each with its own `BUNDLE` and
-  `MANIFEST`.
-- `staging.<bundle id>/` — exists only during a switch.
+- `/usr/bin/tam`, `/usr/bin/tam-*` — every Tamlinux command;
+- `/usr/share/man/man<N>/` — manual pages;
+- `/usr/share/applications/`, `/usr/share/icons/hicolor/` — desktop
+  entries and icons other programs look up;
+- `/usr/lib/systemd/user/`, `/usr/lib/systemd/system/` and the vendor
+  drop-in folders (`*.conf.d/`, `sysctl.d`, `tmpfiles.d`,
+  `environment.d`, `system-sleep`, `zram-generator.conf.d`);
+- `/usr/share/polkit-1/actions/`, `/usr/share/fontconfig/conf.*/`,
+  `/usr/share/libalpm/hooks/` (Arch), `/usr/share/wayland-sessions/`.
 
-Components are built with their prefix set to `/usr/lib/tamlinux/current`,
-so every path compiled into a program points at the live path, never at a
-kept or staging path. A kept tree is only ever used after it has been
-exchanged back into `current/`.
+A file is placed only when another program finds it by a standard path.
+The allowed roots are a fixed list in tam-bundle's code, not in the bundle,
+so a bundle cannot widen them. Nothing is placed in `/etc`, `/usr/local`,
+`/opt`, `/var` or a home directory.
 
-**State, `/var/lib/tam-bundle/<slot name>/`:**
+**The product tree, `/usr/lib/tamlinux/`:**
 
-- `lock` — taken with `flock` for the length of any changing command.
-- `switch` — the intent file, present only while a switch is in progress.
-- `log` — one line per switch, rollback, prune and post-install step.
-- `session.<uid>` — results of the session steps a root run left for that
-  user, who cannot write `log`. Only the root run creates it, owned by that
-  user; the user only appends to it. `status` shows its last line.
-- `keep` — bundle ids that `prune` must not remove, each with a reason
-  (current, previous, recovery anchor).
-- `stat/<bundle id>` — size, inode, modification time and change time
-  of each live file (a change time cannot be set back by hand), recorded after a switch, so a check can find edited files without
-  hashing everything.
-- `saved/` — files saved before a switch replaced them (see "Files someone
-  edited").
+- `version/<bundle id>/` — one unpacked product tree: private programs,
+  the desktop shell and its QML, plugins, fonts and image assets, defaults,
+  and the product's own `BUNDLE` and `MANIFEST`. Real files. The current
+  and previous versions stay unpacked; older ones are unpacked again from
+  their bundle file when needed.
+- `version/<bundle id>/.placed/` — that version's placed files, kept so a
+  rollback has them without reading the bundle file.
+- `current -> version/<bundle id>` — the one link. Programs compile in
+  paths under `/usr/lib/tamlinux/current/`, never a version path.
+- `staging/<bundle id>/` — exists only between prepare and apply.
 
-The state directory and its files are readable by everyone (directories
-`0755`, files `0644`), so `status`, `check` and `where` need no privilege;
-nothing in them is secret.
+`/usr/lib/tamlinux` and `/usr/bin` must be on one filesystem (and on
+Btrfs, one subvolume), so a staged file can be renamed into place;
+prepare checks `st_dev` and refuses otherwise.
 
-For a slot owned by a user other than root, state lives in
-`$XDG_STATE_HOME/tamlinux/tam-bundle/<slot name>/`, following `libtam`'s
-per-command state path.
+**System state, `/var/lib/tamlinux/`** (readable by everyone, nothing
+secret in it):
 
-**Fixed paths outside the slot** (session entry, PAM, polkit, system
-units, environment settings) do not belong to `tam-bundle`. The native
-adapter package owns them (see below). `tam-bundle` writes only inside its
-slot and its state directory.
+- `bundles/<bundle id>.tbundle` — product bundle files, the portable form;
+- `record` — every placed file: path, hash, bundle id;
+- `pending` — the armed switch, present between prepare and apply;
+- `apply` — the apply journal, present only while an apply runs;
+- `host-id` — a random id made once, so a renamed host is still
+  recognized;
+- `keep`, `log`, `lock`, `stat/<bundle id>` — as before.
 
-**Build cache, `$XDG_CACHE_HOME/tamlinux/tam-bundle/`:** finished builds
-of each component keyed by commit and tool versions, so rebuilding a bundle
-reuses components whose commit did not change. Disk is spent to save time.
+The earlier state directory `/var/lib/tam-bundle/` is read once and
+folded into this one.
 
-- `build/<component>-<key>/` — one finished component: `out/` (its
-  installed files), `log` and the `done` stamp, written last; an entry
-  without `done` is rebuilt. The key is SHA-256 over the recipe, the
-  commit, the output kind, the prefix, the tool versions and the keys of
-  the components named in `after-build`, so a changed dependency rebuilds
-  its dependants.
-- `git/<component>.git` — a bare mirror, fetched into only when it lacks a
-  locked commit and `--repos` did not supply it.
-- `lock` — one build at a time.
+**Per-user state, `~/.local/state/tamlinux/`** (mode `0700`):
 
-## Formats
+- `captures/<capture id>/` — settings captures, readable only by that
+  user;
+- `staging/`, `pending`, `apply` — the user's half of a switch (see
+  "Apply"), on the home filesystem so renames into home stay atomic;
+- `settings.list` — paths the user added to the settings list.
 
-All formats are plain UTF-8 text, one record per line, readable with
-`less`. Paths are relative to the tree, never contain a newline, tab or
-`..` component, and come last on a line so spaces are allowed. Each file
-starts with a `format` line; `tam-bundle` reads every format up to its own
-and refuses a newer one with a message naming the version it needs.
+**Build cache, `$XDG_CACHE_HOME/tamlinux/tam-bundle/`:** unchanged from the
+earlier design.
 
-**Lock file** (`tamlinux.lock`, in the packaging repository; replaces the
-Nix flake lock). One line per component, the exact commit in full:
+## What a bundle contains
+
+A product bundle file is one uncompressed POSIX tar archive (`pax`
+format) with `BUNDLE` and `MANIFEST` first, so `verify` can stop early.
+Uncompressed costs disk and saves CPU; anyone may compress it for
+transport. Unpacked, it is the same directory as before and `verify`
+checks either form.
 
 ```text
-format 1
-component libtam         https://github.com/greenermoose/libtam         <40-hex commit>
-component tamlinux-tools https://github.com/greenermoose/tamlinux-tools <40-hex commit>
-component tam            https://github.com/greenermoose/tam            <40-hex commit>
-component tamlinux       https://github.com/greenermoose/tamlinux       <40-hex commit>
+BUNDLE
+MANIFEST
+SETTINGS          settings list with marks (the cultivar's defaults)
+recipe/           the bundle file, component recipes and lock it was built from
+tree/             the product tree
+placed/usr/bin/tam
+placed/usr/share/man/man1/tam.1
+...
 ```
 
-`tam-bundle lock <component> <commit>` rewrites one line, written with
-single spaces, and leaves comments and the other lines as they were;
-nothing updates the lock implicitly. Adding a component needs `--url`. A
-revision shorter than a full commit is resolved only with `--repos DIR`, in
-the local clone `DIR/<component>`, never on a server.
-
-**Recipe** (one small file per component, `recipes/<component>.recipe`,
-data only):
+A workstation bundle adds a settings capture:
 
 ```text
-format 1
-component tam
-build make
-make-vars LIBTAM_PREFIX=@libtam@
-after-build libtam
+capture/CAPTURE   identity: user, host, host id, date, product it was taken with
+capture/FILES     one line per captured file: mark, mode, hash, path
+capture/files/... the files, relative to the home directory
+capture/machine   locale, keymap and timezone, as values
 ```
 
-```text
-format 1
-component libtam
-build make
-output build-only
-make-targets all display session
-install-targets install install-display install-session
-```
-
-`build make` means: export the commit with `git archive` into a clean
-build directory, run `make -j<CPUs>` and then `make install` with the
-listed variables. tam-bundle sets `PREFIX` itself, to `<slot>/current` (the
-default slot gives `/usr/lib/tamlinux/current`), installs with
-`DESTDIR=<private directory>`, and refuses anything installed outside the
-prefix. Each build sees only `PATH` from the caller, plus
-`SOURCE_DATE_EPOCH` set to the commit time, `LC_ALL=C`, `TZ=UTC`, its own
-`HOME` and `TMPDIR`, and `PKG_CONFIG_PATH` naming its build-only
-dependencies. A recipe may not set `PREFIX`, `DESTDIR` or
-`SOURCE_DATE_EPOCH`.
-
-`make-targets` lists the targets for the first make (default: the
-Makefile's default target); `install-targets` lists the targets for the
-second (default: `install`). Both accept target names only, never options
-or variable assignments. Each list runs in one make invocation, with the
-same prefix and variables. The recipe bytes, including these lists, are
-part of the build cache key.
-
-**Fixed build paths.** A build directory can end up inside what is built:
-debug information records it, a static library carries it into every
-program that links it, and a pkg-config file names its prefix. So each
-`make` runs in its own user and mount namespace (no root needed; the
-caller's user and group map to themselves), where `/tmp` is a new, small
-tmpfs holding only fixed mount points:
-
-- `/tmp/tam-bundle/work` — the component's cache entry: `src`, `home`,
-  `tmp` and `dest`;
-- `/tmp/tam-bundle/deps/<component>` — each build-only component it builds
-  against, directly or through another, mounted read-only; a build-only
-  component's own build sees its prefix here, writable, and installs with
-  this `PREFIX`.
-
-The same lock therefore builds the same bytes whatever `$XDG_CACHE_HOME`
-is. Found 2026-11-09: `libtam` compiles with `-g`, and before this a build
-under another cache directory gave another hash. `libtam` 0.5.1 also maps
-its build directory out with `-ffile-prefix-map`, as "a component that
-fails is fixed rather than excused" asks. `build` needs unprivileged user
-namespaces, which Arch's and Void's kernels allow; where they are turned
-off, `build` stops and says so.
-
-`after-build` orders components. A build-only component (`output
-build-only`) installs into a private prefix in the build cache and
-contributes no files to the bundle; `@<component>@` in a make variable
-names that prefix, and must name a build-only component listed in
-`after-build`. Two components installing the same path, or the same
-directory with different modes, are refused. There is no other build kind
-in the first version, and no free-form shell.
-
-**Bundle file** (`recipes/bundle`), the bundle-wide part of `BUNDLE`; the
-version comes from `build --version`:
+**`BUNDLE`** (identity) keeps its earlier lines and gains the dependency
+list and the tam-bundle version needed:
 
 ```text
-format 1
-name tamlinux
-host any
-needs command quickshell   arch=quickshell void=quickshell
-index man
-after shell-restart
-file notes/tamlinux-0.7.0.txt share/tamlinux/version-notes.txt
-```
-
-`index man` asks `build` for the manual index (see "The manual index").
-
-`file <packaging path> <tree path>` adds a regular data file from the
-packaging repository's HEAD commit, installed as mode 0644. Both paths
-are relative; the source is a single word and the destination may contain
-spaces. Parents are created without following links, and existing output
-is never replaced. Links, missing files and the reserved destinations
-`BUNDLE` and `MANIFEST` are refused.
-
-For recipes inside a Git work tree, the bundle file, component recipes
-and lock must all match HEAD in that same repository. `BUNDLE` records
-`source packaging <commit>` alongside the component sources. Extra files
-always come from that commit, even if their working copies have edits.
-Standalone scratch recipes outside Git still work, without a packaging
-source line, but cannot use `file`. `packaging` is reserved as a component
-name when recording a packaging source.
-
-**`BUNDLE`** (identity):
-
-```text
-format 1
+format 2
 name tamlinux
 version 0.7.0
 hash sha256:<64 hex>
+source packaging <commit>
 source libtam <commit>
 source tam <commit>
 tool cc gcc 16.2.1
-tool tam-bundle 0.1.0
-tool man-db 2.13.1
-host any
-needs command quickshell   arch=quickshell void=quickshell
-needs file /usr/lib/libdbus-1.so.3   arch=dbus void=dbus
+tool tam-bundle 0.6.0
+host alex-desktop <host-id>
+needs tam-bundle >= 0.6.0
+needs file /usr/bin/Hyprland exact sha256:<64 hex>  arch=hyprland
+needs file /usr/bin/quickshell >= 0.3.0            arch=quickshell void=quickshell
+needs file /usr/lib/libdbus-1.so.3                 arch=dbus void=dbus
+needs file /usr/bin/python3 >= 3.12                arch=python void=python3
 after user-units-reload
-after shell-restart
-built 2026-11-09T18:00:00Z
+after man-index
+built 2026-11-10T18:00:00Z
 ```
 
-- `host any` or `host <hostname>`; a bundle for another host is refused.
-- `needs` lines are checked by the presence of a command or file, not by
-  asking the package manager. The package names are only used in the
-  message that names what to install.
-- `after` lines name post-install steps from the fixed list.
-- `built` is information and is not part of the hash.
+**`MANIFEST`** lists both parts, sorted, one line per entry; the first
+field says which part:
 
-**`MANIFEST`** (file list, sorted by path, bytewise):
+```text
+format 2
+t d 0755 -               lib
+t f 0644 sha256:<64 hex> share/fonts/...
+p f 0755 sha256:<64 hex> usr/bin/tam
+p f 0644 sha256:<64 hex> usr/share/man/man1/tam.1
+```
+
+`t` is the product tree, `p` placed. Placed entries are files and
+directories only, never links. Tree entries may be relative links that
+stay inside the tree, as before.
+
+**The bundle hash** is SHA-256 over `BUNDLE` without `hash` and `built`,
+then `MANIFEST`, then `SETTINGS`. A capture's hash covers `CAPTURE`,
+`FILES` and `machine`.
+
+## The dependency list
+
+Each `needs` line names a file the cultivar expects to find, because paths
+are the same on every rootstock and package names are not.
+
+- **Hints:** `arch=hyprland void=hyprland` are install hints, shown only in
+  the complaint ("missing /usr/bin/Hyprland; on Arch: `pacman -S
+  hyprland`"). tam-bundle never runs them; the user does.
+- **Versions:** `>= <version>` by default. The version of a file is the
+  version of the rootstock package that owns it, asked from the rootstock's
+  package manager (`pacman -Qo`, `xbps-query -o`). A file no package owns
+  (for example a build in `/usr/local`) is reported as "present, version
+  unknown", a warning, not a refusal.
+- **Exact:** `exact sha256:<hash>` where only the very build will do. The
+  main case is Hyprland: the `fred.*` title-bar plugins are compiled against
+  one Hyprland build, so the bundle records the hash of the `Hyprland` it
+  was built against.
+- **tam-bundle itself:** `needs tam-bundle >= V` lets an older tam-bundle
+  say "this bundle needs tam-bundle 0.6.0 or newer" and stop.
+- **Where the list comes from:** the recipe declares it (the bundle file's
+  `needs` lines, and a component recipe may add its own). At build time
+  tam-bundle also checks what the built files actually use, and refuses to
+  finish if something is used but not listed:
+  - every ELF file's `DT_NEEDED` libraries and interpreter, read from the
+    file, never by running it, resolved against the build host's library
+    path; a library found inside the bundle needs no line;
+  - every script's `#!` interpreter, including `/usr/bin/env <name>`.
+
+  What cannot be read from files (Python imports, QML imports, commands a
+  script runs) stays the recipe's job; the `tam` and shell test suites are
+  what catch omissions there.
+- **When it is checked:** at prepare, before anything changes, and again by
+  `tam-bundle needs <bundle>` at any time. Missing entries are listed all
+  at once, with their hints.
+
+## Settings
+
+**What a capture holds** comes from the settings list: the cultivar ships
+one (`SETTINGS`) and each user may add paths in
+`~/.local/state/tamlinux/settings.list`. Each line marks a path relative to
+home as `common` or `host`:
 
 ```text
 format 1
-d 0755 -                    bin
-f 0755 sha256:<64 hex>      bin/tam
-f 0644 sha256:<64 hex>      share/man/man1/tam.1
-l -    ../../bin/tam        share/tamlinux/bin/tam
+common .bashrc
+common .config/hypr/bindings.lua
+host   .config/hypr/monitors.lua
+host   .config/hypr/hypridle.conf
+common .config/micro/
+common .config/git/config
+common .config/mimeapps.list
 ```
 
-Types are `d` (directory), `f` (regular file) and `l` (symbolic link).
-Links are allowed only inside the tree and only with relative targets that
-stay inside it; the build refuses any other link. Owner is always root (or
-the slot owner for a home slot) and is not recorded.
+A directory entry covers the files beneath it. Three tiers decide the
+list's scope:
 
-**The bundle hash** is SHA-256 over `BUNDLE` without its `hash` and
-`built` lines, followed by `MANIFEST`. Identical sources and tools give an
-identical hash only if every component builds reproducibly; the test suite
-builds a bundle twice and compares hashes, and a component that fails is
-fixed rather than excused.
+- **In:** the settings that make up the Tamlinux experience: Hyprland,
+  the desktop shell and `fred.*` plugins, terminals, the editor, the shell,
+  git settings (not credentials), GTK and fonts, `mimeapps.list`,
+  `environment.d`.
+- **Out:** big application state: browser profiles, editor extensions,
+  note vaults, `~/.local/share` application data and caches. A user may
+  still add a single settings file from such a program.
+- **Never:** secrets. Some paths are refused outright by tam-bundle's code
+  (`.ssh/`, `.gnupg/`, `.local/share/keyrings/`, agent credential folders
+  such as `.gemini/`, `.codex/` and `.claude/` credentials,
+  `.config/gh/hosts.yml`). Every other captured file is scanned for secret
+  patterns (private key blocks, GitHub, OpenAI, Anthropic, Slack and AWS
+  token prefixes, `password=` and `token=` assignments); a match is left
+  out, and the capture names the file and the line number, never the
+  value.
 
-**Log** lines:
+**Machine settings.** From `/etc` a capture takes only three values:
+locale (`/etc/locale.conf`), keyboard layout (`/etc/vconsole.conf` and its
+X layout) and timezone (the zone `/etc/localtime` points to). They are
+`common`. Apply sets them through the rootstock's own tools
+(`localectl`, `timedatectl` on systemd), after checking each value exists
+on the target. Never captured: `fstab`, `crypttab`, hostname, machine-id,
+boot loader settings, saved Wi-Fi passwords, users and passwords.
+
+**Capturing while programs write.** Each file is read, hashed and then
+`fstat`ed again; if its size or change time moved during the read, it is
+read again, up to three times, then reported. A file a program rewrites
+by itself (an editor's `settings.json`) is captured as it is at that
+moment.
+
+**Host marks.** On the host a capture was made on, everything applies. On
+another host:
+
+- `common` files apply;
+- for `host` files the target keeps its own; where it has none, it gets
+  the cultivar's default from the product tree, if there is one;
+- the machine values apply (they are `common`);
+- tam-bundle lists every file it skipped.
+
+The unit is a whole file. When a `common` file names the capturing host or
+one of its display outputs (`DP-1`, `HDMI-A-1`), capture warns that the
+file looks mixed, so the user can split it once and mark the parts.
+
+**Edits relative to the product.** `FILES` records, for each captured
+file, whether it equals the cultivar default of that product version or
+was edited, so a capture never pretends an edited file came unchanged from
+a source commit.
+
+## Prepare and apply
+
+A switch has two halves. **Prepare** does all the slow work while the user
+keeps working. **Apply** does the few renames that make it live, when no
+graphical session is running. Each half has a system part (root) and a
+settings part (the user).
+
+### Prepare (`tam-bundle install <bundle>`, `back`, `restore`)
+
+1. **Check.** Verify the bundle. Run the dependency check; refuse with the
+   full list if anything is missing. Refuse a newer bundle format. Note
+   whether the host differs.
+2. **Ownership.** For each placed path: if tam-bundle's `record` owns it,
+   fine. If it is absent, ask the rootstock's package manager whether a
+   package owns it anyway. If the path exists and is not tam-bundle's,
+   refuse, naming the owning package or "a file no package owns". Nothing
+   has changed yet.
+3. **Names.** A placed command not named `tam` or `tam-*` is refused (see
+   "Command names").
+4. **Guarded files.** If the bundle adds, changes or removes a placed file
+   that affects login or boot (see "Login and boot files"), list them and
+   stop unless the user approves that exact list (`--approve-guarded
+   <digest>`).
+5. **Stage, system part (root, through `pkexec`).** Unpack the product
+   tree into `version/<id>/` (on Btrfs, clone unchanged files from the
+   current version), copy placed files into `staging/<id>/`, hash every
+   copy, then `syncfs` once. Write `pending` (from, to, the list of placed
+   changes) atomically and sync. The old version stays unpacked and whole.
+6. **Stage, settings part (the user).** First capture the current settings
+   automatically (so nothing is lost and the switch can be undone by
+   rolling forward again). Then copy the files that will apply into
+   `~/.local/state/tamlinux/staging/`, sync, and write the user's
+   `pending`.
+7. **Tell the user**, warmly:
+
+   ```text
+   Tamlinux 0.7.0 is ready.
+
+   We don't have to restart the whole computer. Just log out, and we'll
+   get the house in order for you. When you log in again, you'll be
+   amazed!
+   ```
+
+Preparing again replaces an earlier pending switch. `tam-bundle cancel`
+removes it; nothing live has changed.
+
+### Apply (at the next login, or at boot)
+
+**System part, `tam-bundle apply` (root).** Run by
+`tam-bundle-apply.service`, a oneshot system unit from the bootstrap
+package, started in two ways:
+
+- by the session entry (`tam-session`), before it starts the compositor;
+  a polkit rule from the bootstrap package lets a user in an active local
+  session start this one unit without a password. Starting it grants
+  nothing new: it only applies what an authorized prepare already staged
+  and armed;
+- at boot, ordered `Before=systemd-user-sessions.service`, so no one can
+  log in until an interrupted apply is finished.
+
+Steps, under the lock:
+
+1. Nothing pending and no journal: exit at once (a stat or two).
+2. **Busy check.** If any graphical Tamlinux session is running, or any
+   process still runs a program from the old version's tree (`/proc/<pid>/
+   exe` and `maps`), leave the switch armed, say which, and exit. The
+   session entry then starts the old version as it is; nothing is mixed.
+3. Write the journal `apply` (copied from `pending`) and sync.
+4. For each placed change: move the old file into the old version's
+   `.placed/`, rename the staged file into place (`rename(2)`, atomic per
+   file); remove placed files the new version no longer has the same way.
+   `fsync` each changed directory.
+5. Replace `current` with a new link (`symlink` beside it, then `rename`
+   over it) and `fsync` `/usr/lib/tamlinux`.
+6. Update `record`, `keep` (the old id becomes "previous"), `stat`, `log`;
+   set the machine values; `syncfs`; remove `apply` and `pending`.
+7. Run the system post-install steps (`system-daemon-reload`, `man-index`,
+   `sysctl-apply`, `tmpfiles-create`) and log each. Settings that only take
+   effect at boot (logind, the system manager) are named in the message.
+
+**Settings part, `tam-bundle apply-settings` (the user).** Run by the
+session entry right after the system part, before the compositor. It only
+proceeds when the system part has finished for the product version the
+staged settings belong to; the same journal pattern: write the journal,
+rename each staged file into place, sync, remove the journal. It never
+runs as root and never follows links out of the home directory.
+
+**Interruption.** Apply only moves files that prepare already wrote and
+synced, so recovery always goes forward: rerunning apply reads the
+journal, and for each step checks whether it is already done (the
+destination already has the new hash) or still to do (the staged file is
+still there). The boot ordering and the session entry both rerun it before
+any session starts. An apply that finds a state it did not produce (a
+destination with neither hash) stops, changes nothing more, and says what
+it found; the session entry then refuses to start the graphical session
+and says how to recover from a text console.
+
+**What the user sees.** At login, after a pending switch:
 
 ```text
-2026-11-09T18:02:11Z switch tamlinux-0.7.0-3f9a0c1b2d4e from tamlinux-0.6.20-a1b2c3d4e5f6 ok 1.8s
-2026-11-09T18:02:12Z after user-units-reload ok
-2026-11-09T18:40:03Z back tamlinux-0.6.20-a1b2c3d4e5f6 from tamlinux-0.7.0-3f9a0c1b2d4e ok 0.1s
+Getting the house in order: Tamlinux 0.6.21 -> 0.7.0 ... done.
+Welcome back!
 ```
+
+With nothing pending, nothing is printed and nothing measurable is spent.
+
+## Restore and rollback
+
+- `tam-bundle back` prepares the previous product version and the
+  settings capture taken with it; `tam-bundle restore <bundle>` does the
+  same for any retained bundle, forward or backward.
+- Both always capture the current settings first, automatically.
+- `--product-only` keeps the current settings with the other software;
+  `--settings-only` restores a capture onto the current software. When
+  the capture was taken with another product version, tam-bundle warns
+  before preparing.
+- A restore makes the listed settings paths match the capture: files the
+  capture lacks are removed from those paths (they are in the automatic
+  capture). Paths not on the list are never touched.
+- Product rollback to the previous version reads its unpacked tree and
+  `.placed/`; anything older is unpacked from its bundle file first.
+
+## Login and boot files
+
+Some placed files can stop the machine from booting or the user from
+logging in. tam-bundle's code, not the bundle, lists them:
+
+- system units and drop-ins (`/usr/lib/systemd/system*`,
+  `logind.conf.d`, `system.conf.d`, `system-sleep`), `sysctl.d`,
+  `tmpfiles.d`, `zram-generator.conf.d`;
+- polkit actions and rules; the Wayland session entry; the session
+  command `/usr/bin/tam-session`;
+- anything under `udev`, `modules-load.d` or `modprobe.d`.
+
+A change to any of them is named at prepare and needs the user's approval
+of that exact list. The previous version stays unpacked as the rollback
+point, and `sudo tam-bundle back` followed by `sudo tam-bundle apply`
+works from a text console with no graphical session and no polkit agent.
+
+## Command names
+
+Every command Tamlinux places in `/usr/bin` is `tam` or `tam-*`; `build`
+refuses any other name. That makes a collision with a distribution package
+very unlikely, and the ownership check catches the rest. The current
+exceptions are renamed: `suspend-unless-stay-awake` becomes a `tam-*`
+command.
+
+`hi` and `start` must keep working on every Tamlinux workstation, each
+leading to a `tam-*` command. How they are provided and how that is
+enforced is still open.
+
+## Ownership
+
+- **Tamlinux's files** are those in `record`. `tam-bundle where <path>`
+  answers for them; `tam where` asks it first and falls back to the
+  rootstock's package manager.
+- **The rootstock's files** are those its package manager owns. Prepare
+  asks it about every placed path tam-bundle does not already own and
+  refuses on any owner. In the other direction, pacman refuses to install
+  a package over a file it does not own ("exists in filesystem"), so a
+  later rootstock package cannot silently overwrite a Tamlinux file.
+- **Everything else** is left alone, wherever it is: `/usr/local`, extra
+  native packages, per-user installations in home. tam-bundle writes only
+  paths in `record`, staged placed paths that passed the check, its own
+  state, and the settings-list paths in the user's home.
+- tam-bundle does not register its files with the rootstock's package
+  manager; that would mean generating native packages again.
 
 ## Commands
 
-| Command | What it does | Root for the product slot |
+| Command | What it does | Root |
 | --- | --- | --- |
-| `tam-bundle build <recipes> <lock> -o <dir> --version V` | Build a bundle from exact commits, for the slot's live tree | No |
-| `tam-bundle seal <dir> --name N --version V ...` | Write `BUNDLE` and `MANIFEST` for a built tree; `build`'s last step, and how tests make bundles | No |
-| `tam-bundle verify <bundle>` | Check every file against `MANIFEST` and the bundle hash | No |
-| `tam-bundle needs <bundle>` | Report missing native commands or files, with package names | No |
-| `tam-bundle switch <bundle>` | Install the bundle and make it live | Yes |
-| `tam-bundle back [<bundle id>]` | Make the previous (or the named) kept tree live again | Yes |
-| `tam-bundle status` | Live bundle, previous, kept trees, interrupted switch if any | No |
-| `tam-bundle check [--full]` | Find edited, missing or extra files in the live tree | No |
-| `tam-bundle where <path>` | Bundle, version and hash for one installed file | No |
-| `tam-bundle keep <bundle id> <reason>` / `unkeep` | Protect a kept tree from pruning | Yes |
-| `tam-bundle prune [--yes]` | List removable kept trees; remove only with `--yes` | Yes |
-| `tam-bundle recover` | Finish or undo an interrupted switch | Yes |
+| `tam-bundle build <recipes> <lock> -o <file> --version V` | Build a product bundle from exact commits | No |
 | `tam-bundle lock <component> <commit>` | Set one component's commit in a lock file | No |
-| `tam-bundle after` | Run the live bundle's post-install steps as the invoking user | No |
+| `tam-bundle seal`, `verify <bundle>` | Write and check identity and file list | No |
+| `tam-bundle needs <bundle>` | Check the dependency list on this machine | No |
+| `tam-bundle capture [-o <file>]` | Capture the user's settings; with `-o`, write a workstation bundle | No |
+| `tam-bundle install <bundle>` | Prepare a product or workstation bundle | Prepare's system part |
+| `tam-bundle back`, `restore <bundle>` | Prepare the previous or a named bundle, with `--product-only` or `--settings-only` | Prepare's system part |
+| `tam-bundle cancel` | Drop a pending switch | System part |
+| `tam-bundle apply` | System part of a pending switch; run by the unit | Yes |
+| `tam-bundle apply-settings` | Settings part; run by the session entry | No |
+| `tam-bundle status` | Current, previous, pending, interrupted, space used | No |
+| `tam-bundle check [--full]`, `where <path>` | Edited, missing or extra files; owner of one file | No |
+| `tam-bundle keep`, `unkeep`, `prune [--yes]` | Protect, list and remove retained bundles | Yes |
+| `tam-bundle after` | Rerun the user-session post-install steps | No |
 
-Every changing command takes `--slot <dir>` (default `/usr/lib/tamlinux`)
-and `--dry-run`. Every changing command recovers an interrupted switch first,
-and stops if it cannot be finished or undone automatically (see
-"Interruption recovery").
+Privilege works as before: run as a user, the root parts re-run through
+`/usr/bin/pkexec` with `/proc/self/exe`; run as root from a text console,
+they do the root part and print what the user still has to run. Refusals
+(`126`, `127`) are explained. `tam-deploy` keeps the stage logic and calls
+these commands.
 
-**Privilege.** Run as a user, `switch`, `back`, `keep`, `prune` and
-`recover` re-run their privileged part through `pkexec tam-bundle ...`
-(the native adapter ships the polkit action), then run user-session
-post-install steps as the user. Run directly as root (for example with
-`sudo` from a text console, where no polkit agent runs), they do the
-privileged part and print the user-session steps still to run. A home slot
-needs no privilege at all.
+## Retention
 
-How it works:
+- **Always kept:** current, previous, the recovery anchor and anything
+  pinned with `keep`.
+- **Unpacked:** current and previous only.
+- **Removed only on request:** `tam-bundle prune` lists what it would
+  remove and the space it would free, and removes only with `--yes`. A
+  plain prune keeps the five most recent product bundles and the five most
+  recent captures beyond the always-kept set. Nothing runs on a timer.
+- After an install, tam-bundle mentions the space used when it passes a
+  threshold (default 20 GB).
 
-- **When.** A changing command (not a dry run) by a user other than root,
-  on a slot that is root's or would be created under a directory of
-  root's. Other commands, and dry runs, run as the user.
-- **The same command.** `tam-bundle` runs `/usr/bin/pkexec` (an absolute
-  path, so `PATH` cannot choose what runs as root) with its own absolute
-  path from `/proc/self/exe` and the same arguments. pkexec starts the
-  program in `/root` with a cleared environment, so a relative bundle
-  directory or `--state` is made absolute first.
-- **Session steps.** `user-units-reload`, `qml-cache-purge` and
-  `shell-restart` need the user's session. The root run, seeing
-  `PKEXEC_UID`, does not run them; it logs `after <step> deferred to uid
-  <uid>`. When pkexec returns, the waiting user process reads the log
-  lines added since it started, and runs the steps deferred to its own uid,
-  once each, recording each result in `session.<uid>`, which the root run
-  created for it. Run with `sudo`, the root run creates the same file for
-  `SUDO_UID`, so a later `tam-bundle after` by that user is recorded too.
-  Any later step that needs no session would run in the root run.
-- **Refusals.** pkexec's own exit codes mean the program never ran: `126`
-  (authorization refused or dismissed) and `127` (it could not run, as on
-  a text console with no polkit agent). Each is reported with what to do
-  instead, and nothing changed. A missing pkexec is reported the same way.
-- **The polkit action.** `data/org.tamlinux.bundle.policy.in`, installed by
-  `make install` with the installed path substituted, names
-  `org.tamlinux.bundle`: administrator authentication, kept for a short
-  while in an active session. polkit reads actions only from
-  `/usr/share/polkit-1/actions`, so the native adapter installs it there; a
-  development install elsewhere falls back to pkexec's general action,
-  which also asks for an administrator.
-- **Tests.** The test build takes `$TAM_BUNDLE_PKEXEC`, a stand-in that
-  runs the command as the same user from `/` with a cleared environment
-  and `PKEXEC_UID` set; the installed build has no such setting.
+## Development builds and PATH
 
-**Relation to `tam-deploy`.** `tam-deploy` keeps the stage logic (Test,
-Run, back, status) and calls `tam-bundle` for building, switching and
-rollback. `tam where <path>` asks `tam-bundle where` first and falls back
-to the distribution's package manager.
+- Development builds install with `make install PREFIX=$HOME/.local`, so
+  their commands land in `~/.local/bin`, ahead of `/usr/bin`. No root.
+- `tam` and tam-bundle warn whenever a `tam` or `tam-*` command in
+  `~/.local/bin` shadows the one in `/usr/bin`, naming both, so a
+  forgotten development copy cannot hide.
+- Programs compiled for the product tree look up private files under
+  `/usr/lib/tamlinux/current/`; a development build that needs its own
+  private files uses its own prefix for them, as today.
 
-## Switch algorithm
+## Bootstrap
 
-Inputs: a verified bundle, the slot, the state directory.
+The rootstock provides one small native package, `tamlinux-bootstrap`
+(Arch first; the same idea built with `xbps-src` on Void):
 
-1. **Lock and check.** Take `lock`. Confirm `current/`, `kept/` and the
-   staging path are on the same device (`st_dev`); refuse otherwise. Run
-   the recovery check. Read `current/BUNDLE`; if the live hash equals the
-   bundle's, report "already live" and stop. Refuse a wrong `host`. Run the
-   `needs` check and refuse with the list of what is missing.
-2. **Edits.** Run `check` on the live tree (see "Files someone edited").
-   Stop if it finds edits, unless `--save-edits` was given.
-3. **Intent.** Write `switch` (`from <live id>`, `to <new id>`, `staging
-   <path>`) with `tam_fs_write_atomic` and sync the state directory.
-4. **Stage.** Create `staging.<new id>/`. For each `MANIFEST` entry, in
-   order:
-   - directory: create it with its mode;
-   - file whose hash equals the live file's recorded hash: clone it from
-     `current/` (`FICLONE`); where cloning is unsupported, copy it from the
-     bundle;
-   - other files: copy from the bundle, hash the copy, and stop on a
-     mismatch; bundle files are opened strictly beneath the bundle
-     directory (`openat2` with `RESOLVE_BENEATH` and
-     `RESOLVE_NO_SYMLINKS`), so a link swapped into a bundle cannot make
-     a root switch read files outside it;
-   - link: create it.
-   Then write `BUNDLE` and `MANIFEST`, set directory modes last, and call
-   `syncfs` on the staging tree once, so every new file is on disk before
-   any of it becomes visible.
-5. **Exchange.** `renameat2(staging.<new id>, current, RENAME_EXCHANGE)`,
-   then `fsync` the slot directory. The new tree is live; the old tree is
-   now at `staging.<new id>/`.
-6. **Keep the old tree.** Rename `staging.<new id>/` to `kept/<old id>/`
-   and `fsync` both directories.
-7. **Record.** Append the log line, write `stat/<new id>`, add the old id
-   to `keep` as "previous" (replacing the last "previous"), remove
-   `switch`, and sync the state directory.
-8. **Post-install steps.** Run each `after` step and log its result. A
-   failed step is reported and logged; it does not undo the switch, because
-   the files are already correct and each step can be rerun.
+- `/usr/bin/tam-bundle`, built static, so it needs no library and runs on
+  glibc and musl rootstocks alike;
+- its manual page, its polkit action and the polkit rule for the apply
+  unit;
+- `tam-bundle-apply.service` (on a systemd rootstock; Void's runit needs
+  its own trigger, designed with the Void port);
+- the empty `/usr/lib/tamlinux/` and `/var/lib/tamlinux/`;
+- a dependency on polkit.
 
-**Rollback (`back`)** needs no staging and copies nothing: write the
-intent, exchange `kept/<previous id>/` with `current/` directly, rename the
-displaced tree to `kept/<newer id>/`, record, and run the post-install
-steps. Before exchanging, `back` runs `check` on the kept tree; with
-`--full` it hashes every file. It takes well under a second.
+tam-bundle is upgraded only through that package, never by a bundle: the
+ownership check would refuse a bundle that tries to overwrite a
+package-owned file anyway. A newer tam-bundle reads every older bundle and
+capture format; an older one refuses a newer format by name.
 
-**Running programs.** A program that already has a file open keeps reading
-the old file (verified above). A long-running program that opens files by
-path later, such as the desktop shell loading QML, would read the new tree
-while running old code. The `shell-restart` step exists for that, and
-`tam-deploy` already restarts the shell after a change.
+**Static linking and users.** A static glibc program cannot use NSS
+modules, so it cannot look up users that come from `systemd-homed`, LDAP or
+similar. tam-bundle needs a user's home directory only for the settings
+part, which runs as that user and takes `$HOME`; the root part needs only
+the numeric id from `PKEXEC_UID` or `SUDO_UID`. To verify when building:
+static against musl, or static glibc with no NSS lookups.
 
-## Interruption recovery
+## From the earlier design
 
-The intent file and the identity file inside the live tree decide every
-case. At the start of every changing command (`switch`, `back`, `recover`,
-`keep`, `unkeep`, `prune`), under the slot's lock:
+**Stays:**
 
-| Found | Meaning | Action |
-| --- | --- | --- |
-| No `switch` file, no `staging.*` | Clean | Continue |
-| No `switch` file, a `staging.*` directory | A staging tree that never went live | Remove it, log it, continue |
-| `switch` present, `current/BUNDLE` is `from` | Stopped before the exchange | Remove staging, remove `switch`, log "undone"; the old tree is live and untouched |
-| `switch` present, `current/BUNDLE` is `to` | Stopped after the exchange | Do steps 6 and 7, log "finished", then report that post-install steps did not run and run them |
-| `switch` present, `current/BUNDLE` is neither | Not produced by this program | Stop, change nothing, print what was found |
+- lock file, recipes, `build`, build cache, fixed build paths in user and
+  mount namespaces, reproducibility test;
+- `seal`, `verify`, `check`, `where`, `keep`, `prune`, the stat-based edit
+  check and `--save-edits`;
+- privilege through `pkexec` and the polkit action;
+- line formats and "read every older format"; the `format 1` files remain
+  readable;
+- the crash-test harness (fault points, `SIGKILL` runs), applied to the new
+  phases;
+- the `libtam` additions (SHA-256, walk, records, atomic writes, directory
+  sync, clone, safe tree removal, `flock`).
 
-The exchange keeps the live tree whole, but until recovery the bookkeeping
-around it is not: after an interrupted `back`, the tree that was live sits
-in `kept/` under the target's name, and the keep list still names the old
-"previous". A command that acted on kept trees or the keep list before
-recovering could delete the wrong tree (found 2026-11-09: `prune` removed
-the tree that had been live, and rollback to it then failed). So:
+**Changes:**
 
-- **Changing commands recover first.** A dry run changes nothing: it says
-  what recovery would do and exits with status 4.
-- **Reading commands that use only the live tree** (`check`, `where`,
-  `after`) answer from it, since it is always one whole bundle, and print a
-  warning naming the interrupted switch. A user often cannot recover a
-  root-owned slot, and the answer is correct.
-- **`status`** reports the interrupted switch and exits with status 4.
+- **Build prefix and split.** Components install with `PREFIX=/usr` into a
+  private `DESTDIR`; anything under `usr/lib/tamlinux/current/` becomes the
+  product tree, everything else must fall under an allowed placed root or
+  the build is refused. Components keep compiling private paths under
+  `/usr/lib/tamlinux/current/`.
+- **Switch and rollback** become prepare and apply; the slot's `current/`
+  and `kept/` become `version/<id>/` and the `current` link.
+- **Manual pages** are placed in `/usr/share/man` and indexed by the
+  rootstock's man-db (Arch runs `man-db.timer` daily) plus the
+  `man-index` post-install step, which runs `mandb --quiet` at apply. The
+  index built into the bundle (`index man`) no longer applies, because the
+  pages now live in the shared hierarchy.
+- **Native adapter.** `tamlinux-native`'s vendor drop-ins and commands
+  move into the bundle as placed files; its dependency list moves into
+  `needs`; what remains becomes `tamlinux-bootstrap`.
+- **State** moves from `/var/lib/tam-bundle/` to `/var/lib/tamlinux/`.
+- **Host:** `host any` / `host <name>` refusal becomes the host record
+  and host marks.
+- **Personal configuration** is now captured (it was excluded).
 
-This follows the rule of journaling systems: SQLite rolls back a hot
-journal before it reads the database, and ext4 replays its journal at
-mount before anything uses the filesystem. Here only the bookkeeping can
-be inconsistent, so only the commands that use it must wait for recovery.
+**Goes:**
 
-Removal of staging or kept trees uses directory descriptors (`openat`,
-`unlinkat`), never follows symbolic links and never crosses to another
-device.
+- `renameat2(RENAME_EXCHANGE)` of whole trees, and the recovery table
+  built on it;
+- `current/bin` on `PATH` and `current/share` on `XDG_DATA_DIRS`:
+  `/etc/profile.d/tamlinux.sh`, `/usr/lib/environment.d/50-tamlinux.conf`
+  and the `user@.service.d/20-tamlinux-bundle.conf` drop-in are removed;
+  user units are placed in `/usr/lib/systemd/user/` instead.
 
-**Crash test (required before any real use).** The test build has a fault
-point after each numbered step and after every hundredth file in step 4;
-a test variable makes the program exit at a chosen point without cleanup.
-For each point the suite checks that the live tree afterwards is exactly
-the old bundle or exactly the new one (by `check --full`), and that the
-next command recovers to a clean state. A second test sends `SIGKILL` at
-random moments during a hundred switches and rollbacks in a temporary
-slot. Power loss is not simulated in this version; it relies on step 4's
-`syncfs` and the directory `fsync`s.
+## Proofs required
 
-**Older-bundle test (required).** Switch through at least three bundles,
-including one written in the oldest supported format, then roll back to
-each and `check --full` it.
-
-## Files someone edited
-
-The survey proposed pacman's three-hash rule for user-edited files
-outside the exchanged directories. In this design there are no such files:
-the slot holds everything `tam-bundle` installs, and fixed paths elsewhere
-belong to the native adapter package, so the distribution's own rules
-(for example pacman's `.pacnew`) cover them.
-
-What remains is someone editing a file inside `current/` by hand, as root,
-for example while debugging. An exchange never overwrites such a file; it
-moves with the old tree into `kept/`. But a later `prune` would delete it.
-So:
-
-- `check` compares size, modification time and inode with `stat/<id>`,
-  and hashes only files whose values changed (`--full` hashes everything).
-  It lists edited, missing and extra files.
-- `switch` stops when `check` finds any, and names them.
-- `switch --save-edits` copies them to `saved/<old id>/<path>` first, logs
-  that, and continues.
-
-## Native adapter package
-
-A small native package per distribution: `tamlinux-native` on Arch, a
-package of the same name built with `xbps-src` on Void. It carries what the
-distribution must know about, and nothing that changes with each Tamlinux
-version:
-
-- `/usr/bin/tam-bundle`, built from a pinned `tamlinux-tools` commit. It is
-  never inside the bundle it installs, so a broken bundle cannot break the
-  tool that rolls it back.
-- The empty slot `/usr/lib/tamlinux/` and its `kept/` directory.
-- The polkit action that lets `pkexec tam-bundle` run the privileged part.
-- Environment settings that put `current/bin` on `PATH` and
-  `current/share` on `XDG_DATA_DIRS`. man-db finds `current/share/man`
-  from `PATH`, so the manual path needs no setting.
-  - `/etc/profile.d/tamlinux.sh`, owned by the package, for login shells.
-    A text-console login reads `/etc/profile`, which reads this folder,
-    and a graphical session started from that login shell inherits it.
-    This is the one file the adapter places under `/etc`, as other
-    native packages do.
-  - `/usr/lib/environment.d/` for programs the user service manager
-    starts.
-  - A `user@.service` drop-in under `/usr/lib/systemd/system/` that sets
-    `XDG_DATA_DIRS` in the user service manager's own environment. A test
-    showed the manager builds its unit search path from its own
-    environment only, never from `environment.d`, so without the drop-in
-    it would not find `current/share/systemd/user`. The drop-in takes
-    effect at the next login.
-- The Wayland session entry, PAM configuration and any system units, all
-  pointing at stable paths under `current/`.
-- Ordinary dependencies on the third-party packages Tamlinux needs, so
-  pacman or xbps installs them.
-
-`pacman -Qo` knows the adapter's files and not the bundle's; `tam where`
-answers for both.
-
-## libtam additions
-
-In the next `libtam` minor version, with tests:
-
-- **SHA-256:** incremental (`init`, `update`, `final`), whole file, and
-  hex formatting.
-- **Directory walk:** sorted, descriptor-based (`openat`, `fstatat`), never
-  following symbolic links, with a callback per entry.
-- **Line records:** read and write the line formats above, with path
-  validation (no newline, tab or `..`) and a `format` line check.
-- **File system:**
-  - `tam_fs_write_atomic` also syncs the parent directory (today it syncs
-    the file but not the directory that holds the new name);
-  - sync a directory;
-  - exchange two paths, reporting `EXDEV` and unsupported filesystems
-    clearly;
-  - clone a file, falling back to `copy_file_range` and then to read and
-    write;
-  - remove a tree under a directory descriptor, without following links or
-    crossing devices;
-  - take and release an `flock` lock with a timeout.
-
-`tam-bundle` itself holds only its own logic: formats, the switch,
-recovery, checks and the command line.
-
-## Post-install steps
-
-The first fixed list. Each runs only if the bundle names it, and each is
-logged:
-
-- `user-units-reload` — `systemctl --user daemon-reload` in the invoking
-  user's session.
-- `qml-cache-purge` — remove the desktop shell's compiled QML cache.
-- `shell-restart` — restart the desktop shell if it is running.
-
-Adding a step is a code change to `tam-bundle`, reviewed like any other.
-
-## The manual index
-
-`whatis`, `apropos` and `tam`'s section browsing read man-db's index, not
-the pages. The index is built into the bundle, not after install, so it
-always matches the pages it describes, rolls back with them and costs a
-switch nothing. This replaces an earlier post-install `man-index` step;
-no bundle with that step was ever delivered.
-
-- **Where it lives.** `current/share/man` is not one of man-db's system
-  hierarchies, so man-db keeps its index inside the hierarchy, as
-  `share/man/index.db` (and the same in any locale subdirectory). `man`,
-  `whatis` and `apropos` read it there from a read-only tree and write
-  nothing, there or in the home directory.
-- **How `build` makes it.** With `index man` in the bundle file, after
-  merging and before sealing, `build`:
-  1. refuses a bundle with no `share/man`, or one where a component
-     installed an index of its own;
-  2. sets every entry under `share/man` to the newest locked commit's
-     time, because the index records each page's modification time;
-  3. runs `mandb --create` on the hierarchy (given as an argument, which
-     every build of `mandb` reads, unlike `MANPATH`) in a fixed
-     environment: no home directory, `--config-file=/dev/null`, `LC_ALL=C`
-     and `TZ=UTC`;
-  4. removes the empty `cat<section>` directories `mandb` makes for
-     formatted pages, and refuses anything else it adds.
-- **Recorded and reproducible.** `index.db` is listed and hashed in
-  `MANIFEST` like any file, and `BUNDLE` records `tool man-db <version>`.
-  The same lock gives the same index bytes whatever the build directory,
-  file system or directory order (tested on tmpfs, ext4 and Btrfs with 400
-  pages, and with two builds of man-db 2.13.1). The man-db version is not
-  part of the components' cache keys, so a man-db update rebuilds no
-  component, only the index.
-- **Limits.** A man-db that changed its index format would need the bundle
-  rebuilt; the format has been `2.5.0` for many years. Running `mandb` as
-  root with the live tree on the manual path would rewrite the index, and
-  `check` would report it as edited.
-
-## Size and speed
-
-Today's Tamlinux commands output is about 400 MB in 1,115 files, mostly
-fonts (about 280 MB) and image assets (about 115 MB) that rarely change.
-
-- **Btrfs:** unchanged files are clones, so a switch writes only changed
-  files and a kept tree costs only the disk of the files that differ.
-- **ext4 and others:** each switch copies the whole tree once (a second or
-  two on solid-state storage) and each kept tree costs its full size. With
-  current, previous and one anchor kept, that is about 1.2 GB.
-- **Rollback:** an exchange of existing trees, under a second on any
-  filesystem.
-- **Build:** unchanged components come from the build cache.
-
-`prune` lists sizes as reported by the filesystem; on Btrfs, shared extents
-mean the space actually freed can be much smaller than the listed size, and
-the listing says so.
+1. **Build and identity:** the same lock builds the same product hash
+   twice; two captures of one version have different ids; the build-time
+   link check refuses an unlisted library.
+2. **Capture and restore:** change real settings, capture, then restore on
+   a fresh user without consulting the original home or any Git
+   repository; the secret scan leaves out planted test tokens.
+3. **Second workstation:** install with only the rootstock, the bootstrap
+   package and the bundle file. A missing dependency is named before
+   anything changes; once supplied, the experience matches, host files
+   skipped and listed.
+4. **Forward and backward:** restore nonadjacent versions and different
+   captures; verify placed files, removals, settings, machine values and
+   post-install steps.
+5. **Interruption:** a fault point after every apply step and every
+   hundredth file, for both parts, and `SIGKILL` at random moments; after
+   each, the next apply finishes forward and `check --full` shows exactly
+   the new version. A power cut on real hardware during apply, at least
+   once, before the daily cutover.
+6. **Ownership:** a placed path owned by a rootstock package, and an
+   unowned file at a placed path, are both refused before any change;
+   files in `/usr/local`, an extra native package and a user's own
+   `~/.local/bin` are untouched after install, restore and prune.
+7. **Login:** the session entry with nothing pending adds no measurable
+   delay; with a pending switch it applies, then starts the new version;
+   with a busy old process it starts the old version and leaves the switch
+   armed.
 
 ## Migration order
 
-Each step lands only on the developer's approval, one at a time, each with
-a rollback point.
+Each step lands only on the developer's approval, one at a time, with a
+rollback point. Nix and Home Manager stay the daily delivery until the
+proofs pass.
 
-1. **Library and tool.** The `libtam` additions with tests and a version
-   bump; then `tam-bundle` with the crash and older-bundle tests, run only
-   in temporary slots, with a development install.
-2. **Recipes.** Recipes and a lock file in `tamlinux-packages` that build
-   the same components the current Nix packages build. Compare the
-   resulting file list with today's delivered file set and explain every
-   difference.
-3. **Native adapter.** Build and install `tamlinux-native`. Switch a first
-   bundle into `/usr/lib/tamlinux` while the current delivery stays active
-   and first on `PATH`; nothing changes for the session yet.
-4. **Readers of the version.** `tam` and the shell read the Tamlinux
-   version from `current/BUNDLE` instead of a per-user version file.
-5. **Cut-over.** The environment puts `current/bin` ahead of the old
-   delivery. Undoing the cut-over is reordering the environment.
-6. **`tam-deploy` back end.** Test and Run go through `tam-bundle`, from
-   one recorded bundle to one endpoint, as today.
-7. **Third-party commands.** Commands that came with the old delivery move
-   to native packages or Mise, or are dropped.
-8. **Recovery anchor.** A release delivered by `tam-bundle` becomes the
-   kept recovery anchor.
-9. **Removal.** Only after the anchor has proved itself, the old delivery
-   mechanism is removed, one approved step at a time.
-
-## Personal configuration
-
-A user's own configuration files are not bundled. They stay real files in
-the home directory, and the user keeps their history in their own version
-control. `tam-bundle` never writes in a home directory except into a home
-slot the user named.
+1. **Design review.** This document.
+2. **Tool.** `tam-bundle` 0.6.0: the format 2 bundle and capture, prepare
+   and apply, ownership and dependency checks, in temporary roots with the
+   crash tests. Built static.
+3. **Recipes.** `tamlinux-packages` builds with `PREFIX=/usr`, the
+   placed/tree split and `needs` lines; components that install outside
+   the allowed roots are fixed.
+4. **Bootstrap package.** `tamlinux-bootstrap` replaces `tamlinux-native`;
+   the dormant slot is converted to `version/<id>/` plus `current`.
+5. **Second workstation.** Proofs 2 to 6 on a second machine first.
+6. **Cutover on the daily workstation.** Home Manager's Tamlinux commands
+   leave `~/.local/bin` (the shadow warning confirms none remain) and the
+   Nix profile folders leave `PATH`.
+7. **`tam-deploy` back end, recovery anchor, then Nix removal,** each
+   separately approved.
 
 ## Open
 
-- **Files programs rewrite.** Some programs rewrite their own settings
-  files (for example an editor's or an agent's `settings.json`). For each
-  one: track it and accept the program's changes as visible differences,
-  or keep the user's settings in a separate file the program reads. Decided
-  file by file.
-- **Which files leave the old delivery for the user's own repository.**
-  The exact split between product files (into the bundle) and personal
-  files (into the user's own version control) is decided per file before
-  step 5.
-- **User units.** Settled by test: the adapter's `user@.service` drop-in
-  (see "Native adapter package"). If it fails in a real login, the
-  fallback is a small fixed set of unit files in the adapter that start
-  programs under `current/`.
-- **Copying bundles between computers.** Any copy method works because
-  `verify` checks the result; whether to add a `pack` command that writes
-  one archive file is left until a second computer needs it.
-- **Exporting bundles as native packages** for a public repository: later,
-  not built now.
-
-## Acceptance
-
-- The crash test and the older-bundle test pass in temporary slots on
-  Btrfs and ext4.
-- Building the same lock twice gives the same bundle hash.
-- A switch with no changed component, from a warm build cache, takes
-  seconds; a rollback takes under a second.
-- `tam-bundle` installs, switches and rolls back Tamlinux on a workstation
-  as real files, with no Nix or Home Manager present.
-- `tam where <path>` answers for every file in the live tree.
+- **`hi` and `start`:** how they are provided on every Tamlinux
+  workstation, leading to `tam-*` commands, and how that is enforced.
+- **The polkit rule for the apply unit:** confirm on Arch that an active
+  local session can start exactly one unit without a password, and that a
+  text-console login counts as active and local.
+- **Busy check limits:** which long-lived processes (terminal
+  multiplexers, agents left running on a text console) hold old files, and
+  whether apply should wait briefly before leaving the switch armed.
+- **The settings list's first contents:** written from the files Home
+  Manager links today, with marks, before the second-workstation proof.
+- **Void:** the apply trigger under runit, and `xbps-query` for ownership
+  and versions.
