@@ -1,4 +1,4 @@
-# tam-bundle 0.5.0: recipe targets and pinned packaging files
+# tam-bundle 0.5.0–0.5.2: recipes and native bring-up
 
 - **CLI Tool:** Codex CLI 0.167.0
 - **Model:** `gpt-6.1-sol`
@@ -38,6 +38,15 @@ checks. Builder checks also passed on Btrfs. New cases exercise multiple
 targets, changed packaging commits, dirty inputs, missing and linked sources,
 destination collisions, traversal and reserved metadata names. No product
 slot or running session was changed by these checks.
+
+Native bring-up subsequently installed 0.5.2 through the recorded native
+adapter and built a full development bundle. On the real product slot:
+initial install, switch to updated readers, `check --full`, rollback to
+the older bundle and forward switch all passed. Rollback/forward exchanges
+took 0.1 seconds. The updated switch reused 2,624 unchanged files and copied
+nine. The unprivileged dry-run plan works with the root-owned 0644 lock.
+The previous desktop service stayed on its existing executable and PID.
+The superseded tools development install was removed after verification.
 
 ## Earlier design continuation
 

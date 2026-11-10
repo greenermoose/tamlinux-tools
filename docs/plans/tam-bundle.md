@@ -10,9 +10,15 @@
   with it and checked against `--help` by `make test`, and the `tam` corpus
   has a page. 0.4.1 makes every changing command recover first (see
   "Interruption recovery"). 0.5.0 adds explicit make and install targets,
-  pinned packaging files and the packaging source commit. Still to come:
-  full product recipes and the native adapter package. 0.5.1 makes dry-run
-  planning read-only even before the first slot/state directory exists.
+  pinned packaging files and the packaging source commit. 0.5.1 makes dry-run
+  planning read-only even before the first slot/state directory exists;
+  0.5.2 makes the state lock readable to those plans. The native adapter and
+  full recipes are now implemented in
+  [tamlinux-packages](https://github.com/greenermoose/tamlinux-packages/blob/develop/docs/bundles.md).
+  Real product-slot install, switch, full verification, rollback and forward
+  switch passed. The slot remains dormant while the previous desktop
+  delivery runs. Daily cutover and the tam-deploy back end remain migration
+  work; they are not completed by the standalone tool's bring-up.
 - **Component:** `tamlinux-tools`, its own version number, C on `libtam`,
   linked statically.
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
