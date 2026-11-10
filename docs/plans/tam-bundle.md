@@ -172,8 +172,15 @@ secret in it):
 - `record` — every placed file: path, hash, bundle id;
 - `pending` — the armed switch, present between prepare and apply;
 - `apply` — the apply journal, present only while an apply runs;
-- `host-id` — a random id made once, so a renamed host is still
-  recognized;
+- `host-id` — the machine's identity, so a renamed or reinstalled host is
+  still recognized. It is derived from the board's DMI UUID
+  (`/sys/class/dmi/id/product_uuid`, readable only by root, so the system
+  part reads it): SHA-256 of a fixed Tamlinux prefix and the UUID, so the
+  raw hardware id never leaves the machine. A board that reports all
+  zeros, all `F`s or another known placeholder falls back to a random id
+  made once, and tam-bundle says so. A reinstall on the same hardware is
+  the same host; a disk moved to another machine is a new one, so the
+  target keeps its own host files;
 - `keep`, `log`, `lock`, `stat/<bundle id>` — as before.
 
 The earlier state directory `/var/lib/tam-bundle/` is read once and
@@ -539,10 +546,14 @@ Both run the same `tam-bundle apply`. Neither is a bundle file.
    user-side trigger runs the same check first, so a yes can come before
    this one refuses.
 3. Write the journal `apply` (copied from `pending`) and sync.
-4. For each placed change: move the old file into the old version's
-   `.placed/`, rename the staged file into place (`rename(2)`, atomic per
-   file); remove placed files the new version no longer has the same way.
-   `fsync` each changed directory.
+4. For each placed change: rename the staged file over the destination
+   (`rename(2)` replaces it in one atomic step, so the path always shows a
+   whole old or a whole new file). The old version's `.placed/` already
+   holds the old copy from that version's prepare; apply first checks its
+   hash against `record`, and only when it is missing or differs moves the
+   live file into `.placed/` before the rename, so a rollback point always
+   exists. Placed files the new version no longer has are moved into the
+   old version's `.placed/`. `fsync` each changed directory.
 5. Replace `current` with a new link (`symlink` beside it, then `rename`
    over it) and `fsync` `/usr/lib/tamlinux`.
 6. Update `record`, `keep` (the old id becomes "previous"), `stat`, `log`;
@@ -861,14 +872,6 @@ proofs pass.
   the rule allows exactly that action without a password.
 - **`tam-desktop` stops the graphical session target on exit:** confirm it
   does today; if not, that is a small product fix before the login proof.
-- **Apply's double rename:** step 4 moves the old file into `.placed/` and
-  then renames the new one in, but `.placed/` already has the old copy
-  from that version's prepare. Proposed: one rename of the staged file
-  over the destination, which also removes the moment the path is missing.
-- **What counts as the same host:** `host-id` is random and made once, so
-  a reinstall looks like a new host and its monitor layouts are skipped.
-  Tying it to the hardware (the board's DMI UUID) keeps a reinstall the
-  same host but makes a moved disk a new one.
 - **A login-time switch without logind or elogind:** if a simpler startup
   later drops the session tracker polkit relies on, the login trigger needs
   another privilege path (a password, or switching only at boot); the boot
