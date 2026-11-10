@@ -1,7 +1,9 @@
 # tam-bundle — design
 
 - **Status:** Revised 2026-11-10 for the developer's requirements of that
-  day; awaiting his review. The earlier design (approved 2026-11-09)
+  day and reviewed by him the same day. The review settled the tam nut,
+  capturing nothing from `/etc`, and keeping the init system out of
+  tam-bundle's core; the remaining questions are under "Open". The earlier design (approved 2026-11-09)
   installed everything into one slot, `/usr/lib/tamlinux/current/`, put
   `current/bin` on `PATH`, swapped whole trees with
   `renameat2(RENAME_EXCHANGE)` and left personal configuration out. The
@@ -56,8 +58,9 @@ chains, daemon or language.
    the exact source commits, its recipe and one content hash. A settings
    capture has its own hash, so two captures of one version differ.
 5. **Never half-baked.** A new version is prepared while the user works and
-   switched in at the next login, before the graphical session starts. An
-   interrupted switch is finished before any session starts. No reboot.
+   switched in the next time the desktop starts, before the graphical
+   session runs. An interrupted switch is finished before any session
+   starts. No reboot.
 6. **Dependencies are listed, not carried.** A bundle contains the Tamlinux
    software, a list of the third-party files it expects and where, and a
    recipe for installing the Tamlinux software. It never carries Hyprland,
@@ -77,10 +80,16 @@ chains, daemon or language.
    alone, wherever it is.
 10. **Nothing in the background.** No daemon, socket, timer or polling. It
     runs when invoked and exits. No network unless asked.
-11. **Fast and cheap.** Nothing to do costs a stat or two at login.
-    Preparing a version with nothing to rebuild takes seconds. Disk is
-    spent to save CPU and time.
-12. **Ours.** C on `libtam`, statically linked, with a man page, `tam`
+11. **No init system in the core.** The bundle format, prepare, apply,
+    recovery and captures work the same under systemd and runit. What
+    depends on the init system (the boot trigger, the folders files may be
+    placed in, the post-install steps) comes from the tam nut's rootstock
+    profile, so a runit rootstock needs its own tam nut, not its own
+    tam-bundle.
+12. **Fast and cheap.** Nothing to do costs a stat or two when the desktop
+    starts. Preparing a version with nothing to rebuild takes seconds. Disk
+    is spent to save CPU and time.
+13. **Ours.** C on `libtam`, statically linked, with a man page, `tam`
     pages and its own tests, including the crash and older-bundle tests.
 
 **Out of scope:** a general package manager; building or shipping
@@ -94,7 +103,14 @@ keeps those, including everything a capture leaves out).
 - **Product bundle:** a built version of the Tamlinux software, ready to
   install: its identity, file list, dependency list and files.
 - **Settings capture:** one user's Tamlinux settings at one moment, with
-  their host marks.
+  their host marks. Only files in the home directory; nothing from `/etc`.
+- **Tam nut:** the smallest piece of Tamlinux, one native package installed
+  on a rootstock, holding `tam-nut` and `tam-bundle` (see "Installing
+  Tamlinux").
+- **Rootstock profile:** the part of the tam nut that says how this
+  rootstock works: which package manager answers ownership questions, which
+  folders files may be placed in, which of them affect login and boot, and
+  which post-install steps exist.
 - **Workstation bundle:** a product bundle plus a settings capture; what
   "bundle this up" produces and what is carried to another workstation.
 - **Product tree:** the part of a product bundle installed under
@@ -109,7 +125,8 @@ keeps those, including everything a capture leaves out).
 
 ## Where things live
 
-**Placed files** (real files, owned in tam-bundle's record):
+**Placed files** (real files, owned in tam-bundle's record). On a systemd
+rootstock such as Arch:
 
 - `/usr/bin/tam`, `/usr/bin/tam-*` — every Tamlinux command;
 - `/usr/share/man/man<N>/` — manual pages;
@@ -122,9 +139,11 @@ keeps those, including everything a capture leaves out).
   `/usr/share/libalpm/hooks/` (Arch), `/usr/share/wayland-sessions/`.
 
 A file is placed only when another program finds it by a standard path.
-The allowed roots are a fixed list in tam-bundle's code, not in the bundle,
-so a bundle cannot widen them. Nothing is placed in `/etc`, `/usr/local`,
-`/opt`, `/var` or a home directory.
+The allowed roots come from the tam nut's rootstock profile, installed by
+the rootstock's package manager, never from the bundle, so a bundle cannot
+widen them. A runit rootstock's profile lists its own folders instead of
+the systemd ones. On every rootstock, nothing is placed in `/etc`,
+`/usr/local`, `/opt`, `/var` or a home directory.
 
 **The product tree, `/usr/lib/tamlinux/`:**
 
@@ -139,9 +158,11 @@ so a bundle cannot widen them. Nothing is placed in `/etc`, `/usr/local`,
   paths under `/usr/lib/tamlinux/current/`, never a version path.
 - `staging/<bundle id>/` — exists only between prepare and apply.
 
-`/usr/lib/tamlinux` and `/usr/bin` must be on one filesystem (and on
-Btrfs, one subvolume), so a staged file can be renamed into place;
-prepare checks `st_dev` and refuses otherwise.
+Staging under `/usr/lib/tamlinux` and every placed root must be on one
+mount of one filesystem (on Btrfs, one subvolume), so a staged file can be
+renamed into place. Prepare compares device and mount id (`statx`
+`STATX_MNT_ID`) for each root and refuses otherwise; device alone misses
+bind mounts.
 
 **System state, `/var/lib/tamlinux/`** (readable by everyone, nothing
 secret in it):
@@ -193,7 +214,6 @@ A workstation bundle adds a settings capture:
 capture/CAPTURE   identity: user, host, host id, date, product it was taken with
 capture/FILES     one line per captured file: mark, mode, hash, path
 capture/files/... the files, relative to the home directory
-capture/machine   locale, keymap and timezone, as values
 ```
 
 **`BUNDLE`** (identity) keeps its earlier lines and gains the dependency
@@ -236,8 +256,8 @@ directories only, never links. Tree entries may be relative links that
 stay inside the tree, as before.
 
 **The bundle hash** is SHA-256 over `BUNDLE` without `hash` and `built`,
-then `MANIFEST`, then `SETTINGS`. A capture's hash covers `CAPTURE`,
-`FILES` and `machine`.
+then `MANIFEST`, then `SETTINGS`. A capture's hash covers `CAPTURE` and
+`FILES`.
 
 ## The dependency list
 
@@ -311,13 +331,21 @@ list's scope:
   out, and the capture names the file and the line number, never the
   value.
 
-**Machine settings.** From `/etc` a capture takes only three values:
-locale (`/etc/locale.conf`), keyboard layout (`/etc/vconsole.conf` and its
-X layout) and timezone (the zone `/etc/localtime` points to). They are
-`common`. Apply sets them through the rootstock's own tools
-(`localectl`, `timedatectl` on systemd), after checking each value exists
-on the target. Never captured: `fstab`, `crypttab`, hostname, machine-id,
-boot loader settings, saved Wi-Fi passwords, users and passwords.
+**Nothing from `/etc`.** Everything in `/etc` belongs to the machine and is
+managed another way, never by Tamlinux bundles. A capture takes no file or
+value from it: not locale, keyboard layout or timezone, and not `fstab`,
+`crypttab`, hostname, machine-id, boot loader settings, saved Wi-Fi
+passwords, users or passwords. The settings half of a switch therefore
+never needs root.
+
+The user's own preferences live in home and are captured as ordinary
+`common` files: language in `~/.config/locale.conf` (read before
+`/etc/locale.conf` by the rootstock's login profile) and the keyboard
+layout in the Hyprland input settings, which fall back to the machine's
+`/etc/vconsole.conf` layout when the user sets none. Timezone is where the
+machine is, so it stays the machine's. When a captured `locale.conf` names
+a locale the target has not generated, apply says so instead of letting it
+fall back silently.
 
 **Capturing while programs write.** Each file is read, hashed and then
 `fstat`ed again; if its size or change time moved during the read, it is
@@ -331,7 +359,6 @@ another host:
 - `common` files apply;
 - for `host` files the target keeps its own; where it has none, it gets
   the cultivar's default from the product tree, if there is one;
-- the machine values apply (they are `common`);
 - tam-bundle lists every file it skipped.
 
 The unit is a whole file. When a `common` file names the capturing host or
@@ -348,7 +375,8 @@ a source commit.
 A switch has two halves. **Prepare** does all the slow work while the user
 keeps working. **Apply** does the few renames that make it live, when no
 graphical session is running. Each half has a system part (root) and a
-settings part (the user).
+settings part (the user). Nothing here depends on the init system except
+the boot trigger, which the tam nut supplies.
 
 ### Prepare (`tam-bundle install <bundle>`, `back`, `restore`)
 
@@ -381,29 +409,49 @@ settings part (the user).
    ```text
    Tamlinux 0.7.0 is ready.
 
-   We don't have to restart the whole computer. Just log out, and we'll
-   get the house in order for you. When you log in again, you'll be
-   amazed!
+   We don't have to restart the whole computer. Just leave the desktop
+   and type start again, and we'll get the house in order for you. When
+   it comes back, you'll be amazed!
    ```
+
+   Where the desktop starts some other way (a login screen), the message
+   says to log out and back in instead.
 
 Preparing again replaces an earlier pending switch. `tam-bundle cancel`
 removes it; nothing live has changed.
 
-### Apply (at the next login, or at boot)
+### Apply (when the desktop next starts, or at boot)
 
-**System part, `tam-bundle apply` (root).** Run by
-`tam-bundle-apply.service`, a oneshot system unit from the bootstrap
-package, started in two ways:
+Linux has no general "run this at the next login" hook, and none is
+needed: Tamlinux owns the command that starts the desktop. On a text-console
+login the user types `start`, which leads to the session entry
+`/usr/bin/tam-session`. Its first lines are the trigger:
 
-- by the session entry (`tam-session`), before it starts the compositor;
-  a polkit rule from the bootstrap package lets a user in an active local
-  session start this one unit without a password. Starting it grants
-  nothing new: it only applies what an authorized prepare already staged
-  and armed;
-- at boot, ordered `Before=systemd-user-sessions.service`, so no one can
-  log in until an interrupted apply is finished.
+1. Nothing pending and no journal: go straight on (a stat or two).
+2. Otherwise run `pkexec tam-bundle apply` (the system part). A polkit rule
+   from the tam nut allows that one action, `org.tamlinux.bundle.apply`,
+   without a password for a user in an active local session. It grants
+   nothing new: apply only finishes what an authorized prepare already
+   staged and armed.
+3. Run `tam-bundle apply-settings` as the user (the settings part).
+4. If the switch replaced `/usr/bin/tam-session`, re-execute the new one,
+   so the old session entry never starts the new version.
+5. Start the compositor.
 
-Steps, under the lock:
+Leaving the desktop returns to the text-console shell, so a switch needs no
+logout from the console, only `start` again.
+
+**The boot trigger.** An interrupted apply must be finished before anyone
+can log in. That requirement is the same everywhere; the mechanism is the
+tam nut's and belongs to the rootstock:
+
+- on systemd, a oneshot `tam-bundle-apply.service` ordered
+  `Before=systemd-user-sessions.service`;
+- on runit, a stage-1 script, which runs before any getty starts.
+
+Both run the same `tam-bundle apply`. Neither is a bundle file.
+
+**System part, `tam-bundle apply` (root).** Steps, under the lock:
 
 1. Nothing pending and no journal: exit at once (a stat or two).
 2. **Busy check.** If any graphical Tamlinux session is running, or any
@@ -418,13 +466,17 @@ Steps, under the lock:
 5. Replace `current` with a new link (`symlink` beside it, then `rename`
    over it) and `fsync` `/usr/lib/tamlinux`.
 6. Update `record`, `keep` (the old id becomes "previous"), `stat`, `log`;
-   set the machine values; `syncfs`; remove `apply` and `pending`.
-7. Run the system post-install steps (`system-daemon-reload`, `man-index`,
-   `sysctl-apply`, `tmpfiles-create`) and log each. Settings that only take
-   effect at boot (logind, the system manager) are named in the message.
+   `syncfs`; remove `apply` and `pending`.
+7. Run the system post-install steps the rootstock profile defines and log
+   each. On systemd these are `system-daemon-reload`, `man-index`,
+   `sysctl-apply` and `tmpfiles-create`; a runit profile has its own. A
+   bundle names steps by these names and a step the profile lacks is
+   reported, not guessed. Settings that only take effect at boot (logind,
+   the system manager) are named in the message.
 
 **Settings part, `tam-bundle apply-settings` (the user).** Run by the
-session entry right after the system part, before the compositor. It only
+session entry right after the system part, before the compositor; it never
+needs root, because captures hold only home files. It only
 proceeds when the system part has finished for the product version the
 staged settings belong to; the same journal pattern: write the journal,
 rename each staged file into place, sync, remove the journal. It never
@@ -440,7 +492,7 @@ destination with neither hash) stops, changes nothing more, and says what
 it found; the session entry then refuses to start the graphical session
 and says how to recover from a text console.
 
-**What the user sees.** At login, after a pending switch:
+**What the user sees.** When the desktop starts after a pending switch:
 
 ```text
 Getting the house in order: Tamlinux 0.6.21 -> 0.7.0 ... done.
@@ -468,7 +520,7 @@ With nothing pending, nothing is printed and nothing measurable is spent.
 ## Login and boot files
 
 Some placed files can stop the machine from booting or the user from
-logging in. tam-bundle's code, not the bundle, lists them:
+logging in. The rootstock profile, not the bundle, lists them. On systemd:
 
 - system units and drop-ins (`/usr/lib/systemd/system*`,
   `logind.conf.d`, `system.conf.d`, `system-sleep`), `sysctl.d`,
@@ -523,7 +575,7 @@ enforced is still open.
 | `tam-bundle install <bundle>` | Prepare a product or workstation bundle | Prepare's system part |
 | `tam-bundle back`, `restore <bundle>` | Prepare the previous or a named bundle, with `--product-only` or `--settings-only` | Prepare's system part |
 | `tam-bundle cancel` | Drop a pending switch | System part |
-| `tam-bundle apply` | System part of a pending switch; run by the unit | Yes |
+| `tam-bundle apply` | System part of a pending switch; run by the session entry and the boot trigger | Yes |
 | `tam-bundle apply-settings` | Settings part; run by the session entry | No |
 | `tam-bundle status` | Current, previous, pending, interrupted, space used | No |
 | `tam-bundle check [--full]`, `where <path>` | Edited, missing or extra files; owner of one file | No |
@@ -559,24 +611,39 @@ these commands.
   `/usr/lib/tamlinux/current/`; a development build that needs its own
   private files uses its own prefix for them, as today.
 
-## Bootstrap
+## Installing Tamlinux
 
-The rootstock provides one small native package, `tamlinux-bootstrap`
-(Arch first; the same idea built with `xbps-src` on Void):
+Tamlinux reaches a machine in three steps:
 
-- `/usr/bin/tam-bundle`, built static, so it needs no library and runs on
-  glibc and musl rootstocks alike;
-- its manual page, its polkit action and the polkit rule for the apply
-  unit;
-- `tam-bundle-apply.service` (on a systemd rootstock; Void's runit needs
-  its own trigger, designed with the Void port);
-- the empty `/usr/lib/tamlinux/` and `/var/lib/tamlinux/`;
-- a dependency on polkit.
+1. **Install a rootstock** (Arch today, Void later) with its own installer
+   and package manager.
+2. **Install the tam nut.** The tam nut is the smallest piece of Tamlinux:
+   one native package for the rootstock (`tam-nut`, built with `makepkg` on
+   Arch and with `xbps-src` on Void later). It holds what is needed before
+   any bundle exists, and nothing more:
+   - `/usr/bin/tam-nut`, which welcomes the user and assesses the hardware;
+   - `/usr/bin/tam-bundle`, built static, so it needs no library and runs
+     on glibc and musl rootstocks alike;
+   - their manual pages, the polkit actions, and the polkit rule for
+     `org.tamlinux.bundle.apply`;
+   - the rootstock profile and the boot trigger for this rootstock's init
+     system;
+   - the empty `/usr/lib/tamlinux/` and `/var/lib/tamlinux/`;
+   - a dependency on polkit.
+3. **From the tam nut, install the full Tamlinux cultivar.** `tam-nut`
+   assesses the hardware, picks the graphical or text-only cultivar bundle,
+   and runs `tam-bundle install`. The dependency check names any rootstock
+   packages still missing, with their install hints. The user installs
+   them and runs it again.
 
-tam-bundle is upgraded only through that package, never by a bundle: the
-ownership check would refuse a bundle that tries to overwrite a
-package-owned file anyway. A newer tam-bundle reads every older bundle and
-capture format; an older one refuses a newer format by name.
+`tam` and its knowledge corpus come with the cultivar, text-only tier
+included, not with the nut, so the native package never has to follow
+`tam` releases.
+
+`tam-nut` and `tam-bundle` are upgraded only through the tam nut package,
+never by a bundle: the ownership check would refuse a bundle that tried to
+overwrite a package-owned file anyway. A newer tam-bundle reads every older
+bundle and capture format; an older one refuses a newer format by name.
 
 **Static linking and users.** A static glibc program cannot use NSS
 modules, so it cannot look up users that come from `systemd-homed`, LDAP or
@@ -617,11 +684,15 @@ static against musl, or static glibc with no NSS lookups.
   pages now live in the shared hierarchy.
 - **Native adapter.** `tamlinux-native`'s vendor drop-ins and commands
   move into the bundle as placed files; its dependency list moves into
-  `needs`; what remains becomes `tamlinux-bootstrap`.
+  `needs`; what remains becomes the tam nut.
 - **State** moves from `/var/lib/tam-bundle/` to `/var/lib/tamlinux/`.
 - **Host:** `host any` / `host <name>` refusal becomes the host record
   and host marks.
-- **Personal configuration** is now captured (it was excluded).
+- **Personal configuration** is now captured (it was excluded), from home
+  only.
+- **Init-specific pieces** (the apply trigger, allowed placed roots,
+  login-and-boot list, post-install steps) move out of tam-bundle's code
+  into the tam nut's rootstock profile.
 
 **Goes:**
 
@@ -640,13 +711,13 @@ static against musl, or static glibc with no NSS lookups.
 2. **Capture and restore:** change real settings, capture, then restore on
    a fresh user without consulting the original home or any Git
    repository; the secret scan leaves out planted test tokens.
-3. **Second workstation:** install with only the rootstock, the bootstrap
-   package and the bundle file. A missing dependency is named before
+3. **Second workstation:** install with only the rootstock, the tam nut
+   and the bundle file. A missing dependency is named before
    anything changes; once supplied, the experience matches, host files
    skipped and listed.
 4. **Forward and backward:** restore nonadjacent versions and different
-   captures; verify placed files, removals, settings, machine values and
-   post-install steps.
+   captures; verify placed files, removals, settings and post-install
+   steps, and that nothing in `/etc` changed.
 5. **Interruption:** a fault point after every apply step and every
    hundredth file, for both parts, and `SIGKILL` at random moments; after
    each, the next apply finishes forward and `check --full` shows exactly
@@ -656,10 +727,10 @@ static against musl, or static glibc with no NSS lookups.
    unowned file at a placed path, are both refused before any change;
    files in `/usr/local`, an extra native package and a user's own
    `~/.local/bin` are untouched after install, restore and prune.
-7. **Login:** the session entry with nothing pending adds no measurable
-   delay; with a pending switch it applies, then starts the new version;
-   with a busy old process it starts the old version and leaves the switch
-   armed.
+7. **Login:** `start` with nothing pending adds no measurable delay; with
+   a pending switch it applies, re-executes the new session entry when it
+   changed, then starts the new version; with a busy old process it starts
+   the old version and leaves the switch armed.
 
 ## Migration order
 
@@ -674,7 +745,7 @@ proofs pass.
 3. **Recipes.** `tamlinux-packages` builds with `PREFIX=/usr`, the
    placed/tree split and `needs` lines; components that install outside
    the allowed roots are fixed.
-4. **Bootstrap package.** `tamlinux-bootstrap` replaces `tamlinux-native`;
+4. **Tam nut package.** The `tam-nut` package replaces `tamlinux-native`;
    the dormant slot is converted to `version/<id>/` plus `current`.
 5. **Second workstation.** Proofs 2 to 6 on a second machine first.
 6. **Cutover on the daily workstation.** Home Manager's Tamlinux commands
@@ -687,13 +758,47 @@ proofs pass.
 
 - **`hi` and `start`:** how they are provided on every Tamlinux
   workstation, leading to `tam-*` commands, and how that is enforced.
-- **The polkit rule for the apply unit:** confirm on Arch that an active
-  local session can start exactly one unit without a password, and that a
-  text-console login counts as active and local.
+  `start` matters most, because it is how the desktop starts and so how a
+  switch is applied. Proposed: the tam nut ships `/usr/bin/hi` and
+  `/usr/bin/start` as small real scripts running `tam-hi` and
+  `tam-session`; the rootstock's package manager then guards the names, and
+  `tam-bundle check` confirms both are present.
+- **The polkit rule for `org.tamlinux.bundle.apply`:** confirm on Arch
+  that a text-console login counts as an active local session and that
+  the rule allows exactly that action without a password.
 - **Busy check limits:** which long-lived processes (terminal
   multiplexers, agents left running on a text console) hold old files, and
-  whether apply should wait briefly before leaving the switch armed.
+  whether apply should wait briefly before leaving the switch armed. While
+  any session stays open, the user's service manager keeps running, so
+  user services started from the old tree may still be up when `start` is
+  typed again; the check must say which of them matter, and it must also
+  catch processes running old `/usr/bin/tam-*` files, not only programs in
+  the old version's tree.
+- **Settings on an ordinary upgrade:** what happens to a settings file
+  when a new product version ships a new default for it. Proposed: a file
+  still equal to the old default takes the new one; an edited file is
+  kept and the new default is put beside it, using the "default or edited"
+  record in `FILES`.
+- **Hyprland updates and the exact pin:** after a rootstock update brings a
+  new Hyprland, the installed bundle no longer meets its `exact` line. A
+  defined step is needed, such as rebuilding only the plugins into a new
+  bundle, and the same pin limits which second workstations qualify.
+- **Apply's double rename:** step 4 moves the old file into `.placed/` and
+  then renames the new one in, but `.placed/` already has the old copy
+  from that version's prepare. Proposed: one rename of the staged file
+  over the destination, which also removes the moment the path is missing.
+- **What counts as the same host:** `host-id` is random and made once, so
+  a reinstall looks like a new host and its monitor layouts are skipped.
+  Tying it to the hardware (the board's DMI UUID) keeps a reinstall the
+  same host but makes a moved disk a new one.
+- **A login-time switch without logind or elogind:** if a simpler startup
+  later drops the session tracker polkit relies on, the login trigger needs
+  another privilege path (a password, or switching only at boot); the boot
+  trigger still works.
 - **The settings list's first contents:** written from the files Home
   Manager links today, with marks, before the second-workstation proof.
-- **Void:** the apply trigger under runit, and `xbps-query` for ownership
-  and versions.
+- **Void:** its rootstock profile: the runit stage-1 boot trigger, placed
+  roots and post-install steps, and `xbps-query` for ownership and
+  versions. The product's own systemd files (user services, logind and
+  sleep hooks, zram, tmpfiles, `environment.d`) need runit equivalents in a
+  runit-built cultivar; that is product porting, not tam-bundle work.
