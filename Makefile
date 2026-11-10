@@ -92,13 +92,26 @@ test: all bin/tam-bundle-test
 	@tests/run_tests.sh
 	@tests/tam-bundle/run.sh
 	@tests/tam-bundle/build.sh
+	@if command -v xmllint >/dev/null; then \
+		sed 's|@BINDIR@|/usr/bin|g' data/org.tamlinux.bundle.policy.in | xmllint --noout - \
+		&& echo "  [PASS] the polkit action file is well-formed"; \
+	else echo "  [SKIP] xmllint is not installed; polkit action file not checked"; fi
 
 clean:
 	rm -rf bin
 
+# The polkit action names tam-bundle by its installed path. polkit reads
+# actions only from /usr/share/polkit-1/actions, so a development install
+# under another prefix carries an inert copy and pkexec asks for an
+# administrator through its general action instead.
+POLICY = share/polkit-1/actions/org.tamlinux.bundle.policy
+
 install: all
-	install -d $(DESTDIR)$(PREFIX)/bin
+	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/share/polkit-1/actions
 	install -m 755 $(BIN) $(DESTDIR)$(PREFIX)/bin/
+	sed 's|@BINDIR@|$(PREFIX)/bin|g' data/org.tamlinux.bundle.policy.in > $(DESTDIR)$(PREFIX)/$(POLICY)
+	chmod 644 $(DESTDIR)$(PREFIX)/$(POLICY)
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/tam-file-select $(DESTDIR)$(PREFIX)/bin/tam-bundle
+	rm -f $(DESTDIR)$(PREFIX)/$(POLICY)

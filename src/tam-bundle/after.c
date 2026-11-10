@@ -28,39 +28,55 @@ __attribute__((unused)) static char *find_command(const tb_slot_t *s, const char
     return NULL;
 }
 
-/* 0 ran and succeeded, 1 skipped (with a note), -1 failed. */
+bool tb_step_is_session(const char *step) {
+    return strcmp(step, "user-units-reload") == 0 || strcmp(step, "qml-cache-purge") == 0 ||
+           strcmp(step, "shell-restart") == 0;
+}
+
+/* Root started by pkexec for a user: that user's own tam-bundle runs the
+ * session steps when this process ends. The test build has no root, so
+ * there PKEXEC_UID alone marks the run its stand-in for pkexec makes. */
+static const char *pkexec_uid(void) {
+    const char *uid = getenv("PKEXEC_UID");
+#ifdef TAM_BUNDLE_TESTING
+    return uid;
+#else
+    return geteuid() == 0 ? uid : NULL;
+#endif
+}
+
+enum { STEP_RAN = 0, STEP_SKIPPED = 1, STEP_DEFERRED = 2, STEP_FAILED = -1 };
+
+/* Run one step, or say why not. */
 static int run_step(const tb_slot_t *s, const char *step) {
+    bool session = tb_step_is_session(step);
+    if (session && pkexec_uid()) return STEP_DEFERRED;
+    if (session && geteuid() == 0) {
+        tb_note("post-install step %s: run `tam-bundle after` as the desktop user", step);
+        return STEP_SKIPPED;
+    }
 #ifdef TAM_BUNDLE_TESTING
     (void)s;
     tb_note("post-install step %s: skipped in the test build", step);
-    return 1;
+    return STEP_SKIPPED;
 #else
-    bool root = geteuid() == 0;
     const char *argv[4] = {NULL};
     char *cmd = NULL;
     if (strcmp(step, "user-units-reload") == 0) {
-        if (root) {
-            tb_note("post-install step %s: run `tam-bundle after` as the desktop user", step);
-            return 1;
-        }
         argv[0] = "systemctl"; argv[1] = "--user"; argv[2] = "daemon-reload";
     } else if (strcmp(step, "qml-cache-purge") == 0 || strcmp(step, "shell-restart") == 0) {
-        if (root) {
-            tb_note("post-install step %s: run `tam-bundle after` as the desktop user", step);
-            return 1;
-        }
         const char *name = strcmp(step, "qml-cache-purge") == 0 ? "tam-qmlcache-purge" : "tam-restart-shell";
         cmd = find_command(s, name);
         if (!cmd) {
             tb_note("post-install step %s: %s is not installed; skipped", step, name);
-            return 1;
+            return STEP_SKIPPED;
         }
         argv[0] = cmd;
     } else {
         /* man-index: the index location for a tree outside the standard
          * manual path is not settled yet (see the design's open items). */
         tb_note("post-install step %s: not available in tam-bundle %s; skipped", step, TB_VERSION);
-        return 1;
+        return STEP_SKIPPED;
     }
     tam_exec_result_t res = tam_exec(argv, 60000);
     int ok = res.exit_code == 0;
@@ -68,18 +84,29 @@ static int run_step(const tb_slot_t *s, const char *step) {
                     res.stderr_len ? ": " : "", res.stderr_len ? res.stderr_buf : "");
     tam_exec_result_free(&res);
     free(cmd);
-    return ok ? 0 : -1;
+    return ok ? STEP_RAN : STEP_FAILED;
 #endif
 }
 
-int tb_run_after(const tb_slot_t *s, const tb_bundle_t *b) {
+static int run_list(const tb_slot_t *s, char *const *steps, size_t n) {
     int result = TB_OK;
-    for (size_t i = 0; i < b->nafter; i++) {
-        int r = run_step(s, b->after[i]);
-        tb_log(s, "after %s %s", b->after[i], r == 0 ? "ok" : r > 0 ? "skipped" : "failed");
-        if (r < 0) result = TB_AFTER_FAILED;
+    for (size_t i = 0; i < n; i++) {
+        int r = run_step(s, steps[i]);
+        if (r == STEP_DEFERRED)
+            tb_log(s, "after %s deferred to uid %s", steps[i], pkexec_uid());
+        else
+            tb_log(s, "after %s %s", steps[i], r == STEP_RAN ? "ok" : r == STEP_SKIPPED ? "skipped" : "failed");
+        if (r == STEP_FAILED) result = TB_AFTER_FAILED;
     }
     return result;
+}
+
+int tb_run_after(const tb_slot_t *s, const tb_bundle_t *b) {
+    return run_list(s, b->after, b->nafter);
+}
+
+int tb_run_steps(const tb_slot_t *s, char *const *steps, size_t n) {
+    return run_list(s, steps, n);
 }
 
 /* The distribution's ID from os-release, or "" when unknown. */

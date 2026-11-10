@@ -60,8 +60,9 @@ typedef struct {
     /* build, lock */
     const char *output, *repos, *lock, *url;
     size_t nsources, ntools, nneeds, nafter;
-    /* positional */
+    /* positional, and where they and --state's value are in argv */
     const char *args[4];
+    int argi[4], state_i;
     size_t nargs;
 } opts_t;
 
@@ -344,6 +345,45 @@ static int cmd_after(tb_slot_t *s) {
     return r;
 }
 
+/* ---- privilege ---------------------------------------------------------- */
+
+/* An absolute form of `path`; caller frees. `must_exist` resolves links. */
+static char *absolute(const char *path, bool must_exist) {
+    if (must_exist) return realpath(path, NULL);
+    if (path[0] == '/') return strdup(path);
+    char cwd[4096];
+    return getcwd(cwd, sizeof cwd) ? tam_path_join(cwd, path) : NULL;
+}
+
+/* The same command again through pkexec, which starts it in /root with a
+ * cleared environment: paths given relative to here are made absolute. */
+static int elevate(const opts_t *o, int argc, char **argv) {
+    char **args = calloc((size_t)argc, sizeof *args);
+    char *bundle = NULL, *state = NULL;
+    int r = TB_FAIL;
+    if (!args) return TB_FAIL;
+    for (int i = 1; i < argc; i++) args[i - 1] = argv[i];
+    if (strcmp(o->args[0], "switch") == 0 && o->nargs == 2) {
+        bundle = absolute(o->args[1], true);
+        if (!bundle) {
+            tb_err("cannot find bundle directory %s: %s", o->args[1], strerror(errno));
+            goto out;
+        }
+        args[o->argi[1] - 1] = bundle;
+    }
+    if (o->state) {
+        state = absolute(o->state, false);
+        if (!state) goto out;
+        args[o->state_i - 1] = state;
+    }
+    r = tb_pkexec(args, o->slot, state);
+out:
+    free(bundle);
+    free(state);
+    free(args);
+    return r;
+}
+
 /* ---- main -------------------------------------------------------------- */
 
 static bool add(const char **list, size_t *n, size_t cap, const char *v) {
@@ -370,7 +410,7 @@ int main(int argc, char **argv) {
             return TB_OK;
         }
         else if (strcmp(a, "--slot") == 0) { VALUE(); o.slot = v; }
-        else if (strcmp(a, "--state") == 0) { VALUE(); o.state = v; }
+        else if (strcmp(a, "--state") == 0) { VALUE(); o.state = v; o.state_i = i; }
         else if (strcmp(a, "--dry-run") == 0) o.sw.dry_run = true;
         else if (strcmp(a, "--full") == 0) o.sw.full = true;
         else if (strcmp(a, "--save-edits") == 0) o.sw.save_edits = true;
@@ -389,7 +429,7 @@ int main(int argc, char **argv) {
         else if (strcmp(a, "--needs") == 0) { VALUE(); if (!add(o.needs, &o.nneeds, 64, v)) return usage("too many --needs"); }
         else if (strcmp(a, "--after") == 0) { VALUE(); if (!add(o.after, &o.nafter, 16, v)) return usage("too many --after"); }
         else if (a[0] == '-' && a[1] == '-') { tb_err("unknown option %s", a); return TB_USAGE; }
-        else if (o.nargs < 4) o.args[o.nargs++] = a;
+        else if (o.nargs < 4) { o.argi[o.nargs] = i; o.args[o.nargs++] = a; }
         else return usage("too many arguments");
 #undef VALUE
     }
@@ -411,6 +451,9 @@ int main(int argc, char **argv) {
         tb_err("unknown command %s", cmd);
         return TB_USAGE;
     }
+    if (changes && !o.sw.dry_run && o.slot[0] == '/' && geteuid() != 0 &&
+        (tb_owned_by_root(o.slot) || tb_test_pkexec()))
+        return elevate(&o, argc, argv);
     if (changes && !o.sw.dry_run && access(o.slot, F_OK) == 0 && access(o.slot, W_OK) != 0) {
         tb_err("slot %s is not writable by you; run tam-bundle with pkexec or sudo", o.slot);
         return TB_FAIL;

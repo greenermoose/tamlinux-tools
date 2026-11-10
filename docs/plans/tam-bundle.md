@@ -3,9 +3,10 @@
 - **Status:** Approved 2026-11-09. `tam-bundle` 0.1.0 implemented the
   formats, `seal`, `verify`, `needs`, `switch`, `back`, `recover`,
   `status`, `check`, `where`, `keep`, `prune` and `after`, with the crash
-  and older-bundle tests; 0.2.0 adds `build` and `lock`. Still to come:
-  privilege through `pkexec`, the `man-index` step, the man page and `tam`
-  pages, and the native adapter package.
+  and older-bundle tests; 0.2.0 adds `build` and `lock`; 0.3.0 adds
+  privilege through `pkexec` and the polkit action. Still to come: the
+  `man-index` step, the man page and `tam` pages, and the native adapter
+  package.
 - **Component:** `tamlinux-tools`, its own version number, C on `libtam`,
   linked statically.
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
@@ -133,6 +134,10 @@ exchanged back into `current/`.
   hashing everything.
 - `saved/` — files saved before a switch replaced them (see "Files someone
   edited").
+
+The state directory and its files are readable by everyone (directories
+`0755`, files `0644`), so `status`, `check` and `where` need no privilege;
+nothing in them is secret.
 
 For a slot owned by a user other than root, state lives in
 `$XDG_STATE_HOME/tamlinux/tam-bundle/<slot name>/`, following `libtam`'s
@@ -338,6 +343,37 @@ post-install steps as the user. Run directly as root (for example with
 `sudo` from a text console, where no polkit agent runs), they do the
 privileged part and print the user-session steps still to run. A home slot
 needs no privilege at all.
+
+How it works:
+
+- **When.** A changing command (not a dry run) by a user other than root,
+  on a slot that is root's or would be created under a directory of
+  root's. Other commands, and dry runs, run as the user.
+- **The same command.** `tam-bundle` runs `/usr/bin/pkexec` (an absolute
+  path, so `PATH` cannot choose what runs as root) with its own absolute
+  path from `/proc/self/exe` and the same arguments. pkexec starts the
+  program in `/root` with a cleared environment, so a relative bundle
+  directory or `--state` is made absolute first.
+- **Session steps.** `user-units-reload`, `qml-cache-purge` and
+  `shell-restart` need the user's session. The root run, seeing
+  `PKEXEC_UID`, does not run them; it logs `after <step> deferred to uid
+  <uid>`. When pkexec returns, the waiting user process reads the log
+  lines added since it started, and runs the steps deferred to its own uid,
+  once each. System steps (`man-index`) run in the root run.
+- **Refusals.** pkexec's own exit codes mean the program never ran: `126`
+  (authorization refused or dismissed) and `127` (it could not run, as on
+  a text console with no polkit agent). Each is reported with what to do
+  instead, and nothing changed. A missing pkexec is reported the same way.
+- **The polkit action.** `data/org.tamlinux.bundle.policy.in`, installed by
+  `make install` with the installed path substituted, names
+  `org.tamlinux.bundle`: administrator authentication, kept for a short
+  while in an active session. polkit reads actions only from
+  `/usr/share/polkit-1/actions`, so the native adapter installs it there; a
+  development install elsewhere falls back to pkexec's general action,
+  which also asks for an administrator.
+- **Tests.** The test build takes `$TAM_BUNDLE_PKEXEC`, a stand-in that
+  runs the command as the same user from `/` with a cleared environment
+  and `PKEXEC_UID` set; the installed build has no such setting.
 
 **Relation to `tam-deploy`.** `tam-deploy` keeps the stage logic (Test,
 Run, back, status) and calls `tam-bundle` for building, switching and

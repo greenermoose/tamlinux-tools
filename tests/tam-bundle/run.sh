@@ -69,6 +69,8 @@ if [ -x "$PROD" ]; then
     # The test build names $TAM_BUNDLE_FAULT; the installed build must not.
     if grep -q TAM_BUNDLE_FAULT "$PROD"; then fail "the installed build reacts to TAM_BUNDLE_FAULT"
     else pass "the installed build has no fault points"; fi
+    if grep -q TAM_BUNDLE_PKEXEC "$PROD"; then fail "the installed build takes a stand-in for pkexec"
+    else pass "the installed build runs only /usr/bin/pkexec"; fi
 fi
 
 # ---- Bundles --------------------------------------------------------------
@@ -258,6 +260,85 @@ for i in $(seq 1 "$rounds"); do
 done
 [ $kill_ok = "$rounds" ] && pass "recovered after $rounds random kills ($killed landed mid-run)" \
     || fail "random kills: $kill_ok of $rounds recovered"
+
+# ---- Privilege ------------------------------------------------------------
+
+# A stand-in for pkexec: it records its arguments, then runs the command as
+# this user from /, with a cleared environment and PKEXEC_UID set, as pkexec
+# runs it as root from /root. FAKE_EXIT fails the way pkexec does.
+FAKE=$BASE/fake-pkexec
+cat > "$FAKE" <<'EOF_FAKE'
+#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_ARGS"
+[ -n "${FAKE_EXIT:-}" ] && exit "$FAKE_EXIT"
+uid=$(id -u)
+cd / && exec env -i PATH=/usr/bin:/bin PKEXEC_UID="$uid" "$@"
+EOF_FAKE
+chmod 755 "$FAKE"
+ARGS=$BASE/pk-args
+pk() { FAKE_ARGS=$ARGS TAM_BUNDLE_PKEXEC=$FAKE "$BIN" --slot "$SLOT" --state "$STATE" "$@"; }
+me=$(id -u)
+deferred() { grep -c " after qml-cache-purge deferred to uid $me\$" "$1/log"; }
+user_ran() { grep -c " after qml-cache-purge skipped\$" "$1/log"; }
+
+fresh_slot; rm -rf "$BASE/state-rel"
+(cd "$BASE" && FAKE_ARGS=$ARGS TAM_BUNDLE_PKEXEC=$FAKE "$BIN" --slot "$SLOT" --state state-rel switch A) \
+    >"$BASE/out" 2>&1
+code=$?
+if [ $code = 0 ] && [ "$(sed -n 's/^live: *//p' < <("$BIN" --slot "$SLOT" --state "$BASE/state-rel" status))" = "$A" ]
+then pass "switch through pkexec makes the bundle live"
+else fail "switch through pkexec (exit $code)"; sed 's/^/        /' "$BASE/out" >&2; fi
+grep -qx "$BASE/A" "$ARGS" && grep -qx "$BASE/state-rel" "$ARGS" \
+    && pass "relative bundle and state paths reach pkexec as absolute paths" \
+    || fail "pkexec arguments: $(tr '\n' ' ' < "$ARGS")"
+head -1 "$ARGS" | grep -q '^/' && pass "pkexec runs this program by its absolute path" \
+    || fail "pkexec program: $(head -1 "$ARGS")"
+[ "$(deferred "$BASE/state-rel")" = 1 ] && [ "$(user_ran "$BASE/state-rel")" = 1 ] \
+    && [ "$(grep -c 'qml-cache-purge: skipped in the test build' "$BASE/out")" = 1 ] \
+    && pass "the root run defers the session step and the user's run takes it, once" \
+    || fail "session step hand-over: $(grep after "$BASE/state-rel/log" | tr '\n' '|')"
+
+fresh_slot
+expect 0 "switch through pkexec, again" pk switch "$BASE/A"
+expect 0 "switch to a second bundle through pkexec" pk switch "$BASE/B"
+expect 0 "back through pkexec" pk back
+[ "$(live_id)" = "$A" ] && pass "back through pkexec restores the first bundle" || fail "live after back: $(live_id)"
+[ "$(deferred "$STATE")" = 3 ] && [ "$(user_ran "$STATE")" = 3 ] \
+    && pass "each switch and back hands its session step to the user" \
+    || fail "hand-overs: $(deferred "$STATE") deferred, $(user_ran "$STATE") run"
+expect 0 "keep through pkexec" pk keep "$B" anchor
+grep -q "$B (anchor)" < <(tbv status) && pass "keep through pkexec protects the tree" || fail "keep through pkexec"
+[ "$(user_ran "$STATE")" = 3 ] && pass "keep runs no session step" || fail "keep ran a session step"
+
+rm -f "$ARGS"
+expect 0 "a dry run needs no pkexec" pk --dry-run switch "$BASE/C"
+expect 0 "status needs no pkexec" pk status
+[ ! -e "$ARGS" ] && pass "pkexec was not asked for a dry run or status" || fail "pkexec ran: $(tr '\n' ' ' < "$ARGS")"
+
+FAKE_EXIT=126 expect 1 "a refused authorization fails" pk switch "$BASE/C"
+grep -q "not authorized" "$BASE/out" && pass "the refusal says it was not authorized" || fail "126 message: $(cat "$BASE/out")"
+FAKE_EXIT=127 expect 1 "pkexec unable to run fails" pk switch "$BASE/C"
+grep -q "sudo" "$BASE/out" && grep -q "tam-bundle after" "$BASE/out" \
+    && pass "with no polkit agent, it says to run as root and then \`tam-bundle after\`" \
+    || fail "127 message: $(cat "$BASE/out")"
+expect 1 "a missing pkexec fails" env TAM_BUNDLE_PKEXEC="$BASE/no-such-pkexec" "$BIN" --slot "$SLOT" --state "$STATE" switch "$BASE/C"
+grep -q "not installed" "$BASE/out" && pass "the refusal names the missing pkexec" || fail "missing pkexec: $(cat "$BASE/out")"
+[ "$(live_id)" = "$A" ] && no_leftovers && pass "failed authorizations leave the slot untouched" \
+    || fail "after failed authorizations: live $(live_id)"
+
+# Run as root by pkexec without this program waiting (`pkexec tam-bundle`
+# typed by hand): the session step is deferred, and `after` runs it.
+before=$(user_ran "$STATE")
+expect 0 "switch with PKEXEC_UID set defers the session step" env PKEXEC_UID="$me" "$BIN" --slot "$SLOT" --state "$STATE" switch "$BASE/C"
+! grep -q "skipped in the test build" "$BASE/out" && [ "$(deferred "$STATE")" = 4 ] \
+    && pass "the deferred step is logged and not run" || fail "PKEXEC_UID run: $(cat "$BASE/out")"
+expect 0 "after runs the live bundle's steps as the user" tbv after
+[ "$(user_ran "$STATE")" = $((before + 1)) ] && pass "after ran the deferred step" || fail "after: $(user_ran "$STATE") runs"
+
+# The state is readable, so status, check and where need no privilege.
+modes=$(stat -c %a "$STATE" "$STATE/stat" "$STATE/log" "$STATE/stat/$C" | tr '\n' ' ')
+[ "$modes" = "755 755 644 644 " ] && pass "state directories and files are readable by everyone" \
+    || fail "state modes: $modes"
 
 # ---- Lock ------------------------------------------------------------------
 

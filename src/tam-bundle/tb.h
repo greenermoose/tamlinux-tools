@@ -7,7 +7,7 @@
 #include <tam.h>
 #include <stdio.h>
 
-#define TB_VERSION "0.2.0"
+#define TB_VERSION "0.3.0"
 #define TB_FORMAT 1               /* newest record format this program reads */
 #define TB_DEFAULT_SLOT "/usr/lib/tamlinux"
 #define TB_SYSTEM_STATE "/var/lib/tam-bundle"
@@ -133,6 +133,10 @@ typedef struct {
  * owned by root and $XDG_STATE_HOME/tamlinux/tam-bundle/<name> otherwise. With `create`, make
  * the slot, kept/ and state directories where missing. */
 int  tb_slot_open(tb_slot_t *s, const char *dir, const char *state, bool create);
+/* The state directory tb_slot_open would choose. Caller frees. */
+char *tb_state_dir(const char *dir, const char *state);
+/* True when `dir`, or its nearest existing parent, belongs to root. */
+bool tb_owned_by_root(const char *dir);
 void tb_slot_close(tb_slot_t *s);
 int  tb_slot_lock(tb_slot_t *s);
 char *tb_state_path(const tb_slot_t *s, const char *leaf); /* caller frees */
@@ -175,9 +179,27 @@ int  tb_recover(tb_slot_t *s, bool dry_run, bool *steps_due);
 
 /* ---- Steps and needs (after.c) ----------------------------------------- */
 
+/* Run the bundle's post-install steps, logging each. Session steps
+ * (user-units-reload, qml-cache-purge, shell-restart) need the desktop
+ * user: run as root they print a note, and run as root through pkexec they
+ * are logged "after <step> deferred to uid <uid>" for the user's own
+ * tam-bundle to run with tb_run_steps. */
 int  tb_run_after(const tb_slot_t *s, const tb_bundle_t *b);
+int  tb_run_steps(const tb_slot_t *s, char *const *steps, size_t n);
+bool tb_step_is_session(const char *step);
 /* Print missing needs; returns the number missing. */
 size_t tb_needs_check(const tb_bundle_t *b, bool print);
+
+/* ---- Privilege (elevate.c) --------------------------------------------- */
+
+/* Run `tam-bundle <args>` as root through pkexec (args end with NULL and
+ * hold no relative paths), then the session steps it deferred to this
+ * user. Returns the root run's exit code, or TB_AFTER_FAILED when only a
+ * session step failed. */
+int  tb_pkexec(char **args, const char *slot, const char *state);
+/* The test build: $TAM_BUNDLE_PKEXEC names a stand-in for pkexec, used
+ * whatever the slot's owner. Always false in the installed build. */
+bool tb_test_pkexec(void);
 
 /* ---- Sealing (seal.c) -------------------------------------------------- */
 

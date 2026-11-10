@@ -14,7 +14,7 @@ char *tb_state_path(const tb_slot_t *s, const char *leaf) {
 
 /* True when the slot, or its nearest existing parent, belongs to root: such
  * a slot keeps its state in the system state directory whoever reads it. */
-static bool owned_by_root(const char *dir) {
+bool tb_owned_by_root(const char *dir) {
     char *p = strdup(dir);
     struct stat st;
     bool root = true;
@@ -29,6 +29,26 @@ static bool owned_by_root(const char *dir) {
     }
     free(p);
     return root;
+}
+
+char *tb_state_dir(const char *dir, const char *state) {
+    if (state) return strdup(state);
+    char *d = strdup(dir);
+    size_t len = d ? strlen(d) : 0;
+    while (len > 1 && d[len - 1] == '/') d[--len] = '\0';
+    const char *base = d ? strrchr(d, '/') : NULL;
+    char *out = NULL;
+    if (base && tb_valid_name(base + 1)) {
+        if (tb_owned_by_root(d)) {
+            out = tam_path_join(TB_SYSTEM_STATE, base + 1);
+        } else {
+            char *xdg = tam_xdg_path(TAM_XDG_STATE, "tam-bundle", NULL, false);
+            out = xdg ? tam_path_join(xdg, base + 1) : NULL;
+            free(xdg);
+        }
+    }
+    free(d);
+    return out;
 }
 
 int tb_slot_open(tb_slot_t *s, const char *dir, const char *state, bool create) {
@@ -48,15 +68,7 @@ int tb_slot_open(tb_slot_t *s, const char *dir, const char *state, bool create) 
     }
     s->name = strdup(base);
 
-    if (state) {
-        s->state = strdup(state);
-    } else if (owned_by_root(s->dir)) {
-        s->state = tam_path_join(TB_SYSTEM_STATE, s->name);
-    } else {
-        char *xdg = tam_xdg_path(TAM_XDG_STATE, "tam-bundle", NULL, false);
-        s->state = xdg ? tam_path_join(xdg, s->name) : NULL;
-        free(xdg);
-    }
+    s->state = tb_state_dir(s->dir, state);
     if (!s->state) {
         tb_err("no state directory for slot %s", s->dir);
         return -1;
@@ -67,8 +79,12 @@ int tb_slot_open(tb_slot_t *s, const char *dir, const char *state, bool create) 
                    errno == EACCES ? " (run with pkexec or sudo)" : "");
             return -1;
         }
+        /* Readable by everyone: `status`, `check` and `where` need no
+         * privilege, and a user who ran a switch through pkexec reads the
+         * log to find the steps left for their session. Nothing here is
+         * secret; the slot's files are world-readable too. */
         char *stat_dir = tam_path_join(s->state, "stat");
-        bool ok = stat_dir && tam_fs_mkdir_p(stat_dir, 0700);
+        bool ok = stat_dir && tam_fs_mkdir_p(stat_dir, 0755);
         free(stat_dir);
         if (!ok) {
             tb_err("cannot create state directory %s: %s", s->state, strerror(errno));
@@ -160,7 +176,7 @@ int tb_intent_write(const tb_slot_t *s, const tb_intent_t *it) {
     snprintf(text, sizeof text, "format 1\nop %s\nfrom %s\nto %s\nsource %s\n",
              it->op, it->from, it->to, it->source);
     char *path = tb_state_path(s, "switch");
-    bool ok = path && tam_fs_write_atomic(path, text, strlen(text), 0600);
+    bool ok = path && tam_fs_write_atomic(path, text, strlen(text), 0644);
     if (!ok) tb_err("cannot write %s: %s", path ? path : "switch", strerror(errno));
     free(path);
     return ok ? 0 : -1;

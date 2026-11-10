@@ -34,7 +34,7 @@ first if they should become tools in this suite.
 | Command | Description | Dependencies |
 | :--- | :--- | :--- |
 | **`tam-file-select`** | File chooser via the desktop XDG Portal | Static `libtam-portal` / `libtam`; shared `libdbus-1` at runtime |
-| **`tam-bundle`** | Installs a named, versioned set of real files into a slot, records it, and switches between versions with rollback ([design](docs/plans/tam-bundle.md)). In development; not yet delivered by any assembly. | Static `libtam` 0.5.0 or later; libc only. `build` and `lock` run `git`, and `build` runs `tar` and `make` |
+| **`tam-bundle`** | Installs a named, versioned set of real files into a slot, records it, and switches between versions with rollback ([design](docs/plans/tam-bundle.md)). In development; not yet delivered by any assembly. | Static `libtam` 0.5.0 or later; libc only. `build` and `lock` run `git`, and `build` runs `tar` and `make`; `pkexec` (polkit) for a root-owned slot |
 
 Assemblies install `tam-file-select` on `PATH`. Product flows that call it
 include share (`tam-menu-share`) and theme branding image pick.
@@ -70,6 +70,13 @@ fixed paths under `/tmp/tam-bundle`, so the same lock gives the same bundle
 whatever the cache's path; this needs unprivileged user namespaces.
 `--repos DIR` takes sources from local clones in `DIR` before fetching from
 a lock file's URL.
+
+On a slot that belongs to root (the default), `switch`, `back`, `recover`,
+`keep`, `unkeep` and `prune` run again as root through `pkexec`, then run
+the session steps (such as restarting the desktop shell) as you. Where no
+polkit agent runs, as on a text console, run the command with `sudo` and
+then `tam-bundle after` as yourself. `make install` also installs the
+polkit action, `share/polkit-1/actions/org.tamlinux.bundle.policy`.
 
 `tam-bundle --help` lists every command and option. The default slot is
 `/usr/lib/tamlinux`; any directory works as a slot, so tests and private

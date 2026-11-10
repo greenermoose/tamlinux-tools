@@ -221,7 +221,7 @@ int tb_stats_write(const char *path, const tb_stats_t *s) {
         text = next;
     }
     if (!text) return -1;
-    bool ok = tam_fs_write_atomic(path, text, tam_str_len(text), 0600);
+    bool ok = tam_fs_write_atomic(path, text, tam_str_len(text), 0644);
     tam_str_free(text);
     return ok ? 0 : -1;
 }
