@@ -24,6 +24,7 @@ model, Fred's guiding prompts verbatim, the commits, and the decisions.
 | 2026-11-09 | Field survey for `tam-bundle`; add `UPSTREAM.md` and `upstream/` | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-field-survey.md) |
 | 2026-11-09 | Design for `tam-bundle` | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-design.md) |
 | 2026-11-09 | `tam-bundle` 0.1.0: formats, switch, rollback, recovery and their tests | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-core.md) |
+| 2026-11-09 | `tam-bundle` 0.2.0: `build` and `lock` | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-build-lock.md) |
 
 The initial commit `18ef5de` predates this record. It was authored in an
 Antigravity session and carries that session's `AI-Tool` and `AI-Model`

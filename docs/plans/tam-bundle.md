@@ -1,11 +1,12 @@
 # tam-bundle — design
 
-- **Status:** Approved 2026-11-09. `tam-bundle` 0.1.0 implements the
+- **Status:** Approved 2026-11-09. `tam-bundle` 0.1.0 implemented the
   formats, `seal`, `verify`, `needs`, `switch`, `back`, `recover`,
   `status`, `check`, `where`, `keep`, `prune` and `after`, with the crash
-  and older-bundle tests. Still to come: `build` and `lock`, privilege
-  through `pkexec`, the `man-index` step, the man page and `tam` pages, and
-  the native adapter package.
+  and older-bundle tests; 0.2.0 adds `build` and `lock`. Still to come:
+  privilege through `pkexec`, the `man-index` step, the man page and `tam`
+  pages, and the native adapter package. Open: build paths leak into
+  binaries with debug information (see "Open").
 - **Component:** `tamlinux-tools`, its own version number, C on `libtam`,
   linked statically.
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
@@ -147,6 +148,16 @@ slot and its state directory.
 of each component keyed by commit and tool versions, so rebuilding a bundle
 reuses components whose commit did not change. Disk is spent to save time.
 
+- `build/<component>-<key>/` — one finished component: `out/` (its
+  installed files), `log` and the `done` stamp, written last; an entry
+  without `done` is rebuilt. The key is SHA-256 over the recipe, the
+  commit, the output kind, the prefix, the tool versions and the keys of
+  the components named in `after-build`, so a changed dependency rebuilds
+  its dependants.
+- `git/<component>.git` — a bare mirror, fetched into only when it lacks a
+  locked commit and `--repos` did not supply it.
+- `lock` — one build at a time.
+
 ## Formats
 
 All formats are plain UTF-8 text, one record per line, readable with
@@ -166,8 +177,11 @@ component tam            https://github.com/greenermoose/tam            <40-hex 
 component tamlinux       https://github.com/greenermoose/tamlinux       <40-hex commit>
 ```
 
-`tam-bundle lock <component> <commit>` rewrites one line; nothing updates
-the lock implicitly.
+`tam-bundle lock <component> <commit>` rewrites one line, written with
+single spaces, and leaves comments and the other lines as they were;
+nothing updates the lock implicitly. Adding a component needs `--url`. A
+revision shorter than a full commit is resolved only with `--repos DIR`, in
+the local clone `DIR/<component>`, never on a server.
 
 **Recipe** (one small file per component, `recipes/<component>.recipe`,
 data only):
@@ -176,17 +190,46 @@ data only):
 format 1
 component tam
 build make
-make-vars PREFIX=/usr/lib/tamlinux/current
+make-vars LIBTAM_PREFIX=@libtam@
 after-build libtam
 ```
 
+```text
+format 1
+component libtam
+build make
+output build-only
+```
+
 `build make` means: export the commit with `git archive` into a clean
-build directory, run `make` and then `make install DESTDIR=<bundle tree>`
-with the listed variables, `SOURCE_DATE_EPOCH` set to the commit time and
-`LC_ALL=C`. `after-build` orders components; a build-only component such as
-`libtam` installs into a private build prefix and contributes no files to
-the bundle. There is no other build kind in the first version, and no
-free-form shell.
+build directory, run `make -j<CPUs>` and then `make install` with the
+listed variables. tam-bundle sets `PREFIX` itself, to `<slot>/current` (the
+default slot gives `/usr/lib/tamlinux/current`), installs with
+`DESTDIR=<private directory>`, and refuses anything installed outside the
+prefix. Each build sees only `PATH` from the caller, plus
+`SOURCE_DATE_EPOCH` set to the commit time, `LC_ALL=C`, `TZ=UTC`, its own
+`HOME` and `TMPDIR`, and `PKG_CONFIG_PATH` naming its build-only
+dependencies. A recipe may not set `PREFIX`, `DESTDIR` or
+`SOURCE_DATE_EPOCH`.
+
+`after-build` orders components. A build-only component (`output
+build-only`) installs into a private prefix in the build cache and
+contributes no files to the bundle; `@<component>@` in a make variable
+names that prefix, and must name a build-only component listed in
+`after-build`. Two components installing the same path, or the same
+directory with different modes, are refused. There is no other build kind
+in the first version, and no free-form shell.
+
+**Bundle file** (`recipes/bundle`), the bundle-wide part of `BUNDLE`; the
+version comes from `build --version`:
+
+```text
+format 1
+name tamlinux
+host any
+needs command quickshell   arch=quickshell void=quickshell
+after man-index
+```
 
 **`BUNDLE`** (identity):
 
@@ -248,7 +291,7 @@ fixed rather than excused.
 
 | Command | What it does | Root for the product slot |
 | --- | --- | --- |
-| `tam-bundle build <recipes> <lock> -o <dir>` | Build a bundle from exact commits | No |
+| `tam-bundle build <recipes> <lock> -o <dir> --version V` | Build a bundle from exact commits, for the slot's live tree | No |
 | `tam-bundle seal <dir> --name N --version V ...` | Write `BUNDLE` and `MANIFEST` for a built tree; `build`'s last step, and how tests make bundles | No |
 | `tam-bundle verify <bundle>` | Check every file against `MANIFEST` and the bundle hash | No |
 | `tam-bundle needs <bundle>` | Report missing native commands or files, with package names | No |
@@ -499,6 +542,18 @@ control. `tam-bundle` never writes in a home directory except into a home
 slot the user named.
 
 ## Open
+
+- **Build paths in binaries.** A component compiled with debug information
+  records its build directory, and a static library carries that path into
+  every program that links it. Build directories live in the build cache,
+  so the same lock built under a different `$XDG_CACHE_HOME` gives a
+  different hash. Found 2026-11-09 by building `libtam` (which compiles
+  with `-g`) and `tamlinux-tools` twice with two cache directories; the
+  same cache directory gives the same hash. Choices: fix each component
+  (`-ffile-prefix-map`), as "a component that fails is fixed rather than
+  excused" says; or have `build` run each make at one fixed path in a
+  private mount namespace, as Nix's sandbox does, which also hides build-only
+  prefixes; or both.
 
 - **Files programs rewrite.** Some programs rewrite their own settings
   files (for example an editor's or an agent's `settings.json`). For each

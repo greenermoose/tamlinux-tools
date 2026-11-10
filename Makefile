@@ -91,6 +91,7 @@ endif
 test: all bin/tam-bundle-test
 	@tests/run_tests.sh
 	@tests/tam-bundle/run.sh
+	@tests/tam-bundle/build.sh
 
 clean:
 	rm -rf bin

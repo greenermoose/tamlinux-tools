@@ -34,7 +34,7 @@ first if they should become tools in this suite.
 | Command | Description | Dependencies |
 | :--- | :--- | :--- |
 | **`tam-file-select`** | File chooser via the desktop XDG Portal | Static `libtam-portal` / `libtam`; shared `libdbus-1` at runtime |
-| **`tam-bundle`** | Installs a named, versioned set of real files into a slot, records it, and switches between versions with rollback ([design](docs/plans/tam-bundle.md)). In development; not yet delivered by any assembly. | Static `libtam` 0.5.0 or later; libc only |
+| **`tam-bundle`** | Installs a named, versioned set of real files into a slot, records it, and switches between versions with rollback ([design](docs/plans/tam-bundle.md)). In development; not yet delivered by any assembly. | Static `libtam` 0.5.0 or later; libc only. `build` and `lock` run `git`, and `build` runs `tar` and `make` |
 
 Assemblies install `tam-file-select` on `PATH`. Product flows that call it
 include share (`tam-menu-share`) and theme branding image pick.
@@ -56,7 +56,17 @@ tam-bundle verify <dir>
 tam-bundle [--slot DIR] switch <bundle dir>
 tam-bundle [--slot DIR] back [<bundle id>]
 tam-bundle [--slot DIR] status | check | where <path> | recover | prune [--yes]
+tam-bundle lock <component> <commit> [--lock FILE] [--url URL] [--repos DIR]
+tam-bundle [--slot DIR] build <recipes dir> <lock file> -o <dir> --version V [--repos DIR]
 ```
+
+`lock` sets one component's exact commit in a lock file (default
+`tamlinux.lock`); a short revision is resolved only in a local clone named
+with `--repos`. `build` exports each locked commit with `git archive`, runs
+`make` and `make install` for it, caches finished components under
+`$XDG_CACHE_HOME/tamlinux/tam-bundle/`, and seals the merged result for the
+slot's live tree. `--repos DIR` takes sources from local clones in `DIR`
+before fetching from a lock file's URL.
 
 `tam-bundle --help` lists every command and option. The default slot is
 `/usr/lib/tamlinux`; any directory works as a slot, so tests and private
@@ -66,7 +76,8 @@ post-install step failed, and `4` when an interrupted switch needs
 `tam-bundle recover`.
 
 `make test` builds `bin/tam-bundle-test`, which honours test fault points,
-and runs `tests/tam-bundle/run.sh` in `$TAM_TEST_DIR` (default `$TMPDIR`).
+and runs `tests/tam-bundle/run.sh` and `tests/tam-bundle/build.sh` (which
+needs `git` and `make`) in `$TAM_TEST_DIR` (default `$TMPDIR`).
 Run it on Btrfs and on ext4 directories to cover both file systems.
 
 ## Building and installation

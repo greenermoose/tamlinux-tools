@@ -25,6 +25,8 @@ static const char usage_text[] =
     "  prune [--yes]                list removable kept trees; remove them with --yes\n"
     "  recover                      finish or undo an interrupted switch\n"
     "  after                        run the live bundle's post-install steps\n"
+    "  build <recipes> <lock> -o <dir> --version V   build a bundle from exact commits\n"
+    "  lock <component> <commit>    set one component's commit in a lock file\n"
     "\n"
     "Options:\n"
     "  --slot DIR      slot directory (default " TB_DEFAULT_SLOT ")\n"
@@ -37,7 +39,10 @@ static const char usage_text[] =
     "\n"
     "seal options: --name N --version V [--host H] [--source \"COMPONENT COMMIT\"]...\n"
     "  [--tool \"NAME VERSION\"]... [--needs \"command|file TARGET [distro=pkg ...]\"]...\n"
-    "  [--after STEP]... [--built TIME]\n";
+    "  [--after STEP]... [--built TIME]\n"
+    "build options: -o DIR --version V [--host H] [--repos DIR] [--built TIME];\n"
+    "  the bundle is built for --slot's live tree, <slot>/current\n"
+    "lock options: [--lock FILE (default tamlinux.lock)] [--url URL] [--repos DIR]\n";
 
 static int usage(const char *why) {
     if (why) tb_err("%s", why);
@@ -52,6 +57,8 @@ typedef struct {
     /* seal */
     const char *name, *version, *host, *built;
     const char *sources[64], *tools[64], *needs[64], *after[16];
+    /* build, lock */
+    const char *output, *repos, *lock, *url;
     size_t nsources, ntools, nneeds, nafter;
     /* positional */
     const char *args[4];
@@ -62,74 +69,36 @@ typedef struct {
 
 static int cmd_seal(const opts_t *o) {
     if (o->nargs != 2 || !o->name || !o->version) return usage("seal needs a directory, --name and --version");
-    const char *dir = o->args[1];
-    int dfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (dfd < 0) {
-        tb_err("cannot open %s: %s", dir, strerror(errno));
-        return TB_FAIL;
-    }
-    struct stat st;
-    bool present = fstatat(dfd, "BUNDLE", &st, AT_SYMLINK_NOFOLLOW) == 0 ||
-                   fstatat(dfd, "MANIFEST", &st, AT_SYMLINK_NOFOLLOW) == 0;
-    close(dfd);
-    if (present) {
-        tb_err("%s already has a BUNDLE or MANIFEST; remove them to seal it again", dir);
-        return TB_FAIL;
-    }
-    tb_manifest_t m;
-    if (tb_manifest_build(dir, &m) != 0) return TB_FAIL;
+    tb_seal_t so = {
+        .name = o->name, .version = o->version, .host = o->host, .built = o->built,
+        .sources = o->sources, .nsources = o->nsources, .tools = o->tools, .ntools = o->ntools,
+        .needs = o->needs, .nneeds = o->nneeds, .after = o->after, .nafter = o->nafter,
+    };
+    return tb_seal(o->args[1], &so, NULL);
+}
 
-    char built[64];
-    if (o->built) {
-        snprintf(built, sizeof built, "%s", o->built);
-    } else {
-        time_t now = time(NULL);
-        struct tm tm;
-        gmtime_r(&now, &tm);
-        strftime(built, sizeof built, "%Y-%m-%dT%H:%M:%SZ", &tm);
-    }
-    /* Everything but the hash, in a fixed order; the hash covers it. */
-    tam_str_t head = tam_str_new("format 1\n");
-    head = tam_str_cat_printf(head, "name %s\nversion %s\n", o->name, o->version);
-    tam_str_t tail = tam_str_new(NULL);
-    for (size_t i = 0; i < o->nsources; i++) tail = tam_str_cat_printf(tail, "source %s\n", o->sources[i]);
-    for (size_t i = 0; i < o->ntools; i++) tail = tam_str_cat_printf(tail, "tool %s\n", o->tools[i]);
-    tail = tam_str_cat_printf(tail, "tool tam-bundle %s\n", TB_VERSION);
-    tail = tam_str_cat_printf(tail, "host %s\n", o->host ? o->host : "any");
-    for (size_t i = 0; i < o->nneeds; i++) tail = tam_str_cat_printf(tail, "needs %s\n", o->needs[i]);
-    for (size_t i = 0; i < o->nafter; i++) tail = tam_str_cat_printf(tail, "after %s\n", o->after[i]);
-    tail = tam_str_cat_printf(tail, "built %s\n", built);
+/* ---- build, lock -------------------------------------------------------- */
 
-    tam_str_t unhashed = tam_str_dup(head);
-    unhashed = tam_str_cat(unhashed, tail);
-    char hash[TB_HASH_LEN + 1];
-    tb_bundle_hash(unhashed, tam_str_len(unhashed), m.text, m.len, hash);
-    tam_str_t text = tam_str_dup(head);
-    text = tam_str_cat_printf(text, "hash %s\n", hash);
-    text = tam_str_cat(text, tail);
-    tam_str_free(head);
-    tam_str_free(tail);
-    tam_str_free(unhashed);
+static int cmd_build(const opts_t *o) {
+    if (o->nargs != 3 || !o->output || !o->version)
+        return usage("build needs a recipes directory, a lock file, -o DIR and --version");
+    if (o->slot[0] != '/') return usage("build needs an absolute --slot");
+    char *prefix = tam_path_join(o->slot, "current");
+    tb_build_opts_t bo = {
+        .recipes = o->args[1], .lock = o->args[2], .output = o->output, .version = o->version,
+        .host = o->host, .repos = o->repos, .prefix = prefix, .built = o->built,
+    };
+    int r = prefix ? tb_build(&bo) : TB_FAIL;
+    free(prefix);
+    return r;
+}
 
-    int result = TB_FAIL;
-    tb_bundle_t b;
-    if (text && tb_bundle_parse(text, tam_str_len(text), "the new BUNDLE", &b) == 0) {
-        char *mpath = tam_path_join(dir, "MANIFEST"), *bpath = tam_path_join(dir, "BUNDLE");
-        /* MANIFEST first: a tree with a BUNDLE always has its MANIFEST. */
-        if (tam_fs_write_atomic(mpath, m.text, m.len, 0644) &&
-            tam_fs_write_atomic(bpath, text, tam_str_len(text), 0644)) {
-            tb_note("sealed %s as %s (%zu entries)", dir, b.id, m.n);
-            result = TB_OK;
-        } else {
-            tb_err("cannot write the records into %s: %s", dir, strerror(errno));
-        }
-        free(mpath);
-        free(bpath);
-        tb_bundle_free(&b);
-    }
-    tam_str_free(text);
-    tb_manifest_free(&m);
-    return result;
+static int cmd_lock(const opts_t *o) {
+    if (o->nargs != 3) return usage("lock needs a component and a commit");
+    tb_lock_opts_t lo = {
+        .file = o->lock ? o->lock : "tamlinux.lock", .url = o->url, .repos = o->repos, .dry_run = o->sw.dry_run,
+    };
+    return tb_lock_set(o->args[1], o->args[2], &lo);
 }
 
 /* ---- verify, needs, check ---------------------------------------------- */
@@ -411,6 +380,10 @@ int main(int argc, char **argv) {
         else if (strcmp(a, "--version") == 0) { VALUE(); o.version = v; }
         else if (strcmp(a, "--host") == 0) { VALUE(); o.host = v; }
         else if (strcmp(a, "--built") == 0) { VALUE(); o.built = v; }
+        else if (strcmp(a, "-o") == 0 || strcmp(a, "--output") == 0) { VALUE(); o.output = v; }
+        else if (strcmp(a, "--repos") == 0) { VALUE(); o.repos = v; }
+        else if (strcmp(a, "--lock") == 0) { VALUE(); o.lock = v; }
+        else if (strcmp(a, "--url") == 0) { VALUE(); o.url = v; }
         else if (strcmp(a, "--source") == 0) { VALUE(); if (!add(o.sources, &o.nsources, 64, v)) return usage("too many --source"); }
         else if (strcmp(a, "--tool") == 0) { VALUE(); if (!add(o.tools, &o.ntools, 64, v)) return usage("too many --tool"); }
         else if (strcmp(a, "--needs") == 0) { VALUE(); if (!add(o.needs, &o.nneeds, 64, v)) return usage("too many --needs"); }
@@ -426,6 +399,8 @@ int main(int argc, char **argv) {
     if (strcmp(cmd, "seal") == 0) return cmd_seal(&o);
     if (strcmp(cmd, "verify") == 0) return cmd_verify(&o);
     if (strcmp(cmd, "needs") == 0) return cmd_needs(&o);
+    if (strcmp(cmd, "build") == 0) return cmd_build(&o);
+    if (strcmp(cmd, "lock") == 0) return cmd_lock(&o);
 
     static const char *const changing[] = {"switch", "back", "recover", "keep", "unkeep", "prune", NULL};
     static const char *const reading[] = {"status", "check", "where", "after", NULL};

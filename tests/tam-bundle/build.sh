@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# tam-bundle build and lock tests: lock files, building from exact commits in
+# small local repositories, the build cache, reproducible hashes, and the
+# refusals. Everything happens under $TAM_TEST_DIR (default $TMPDIR, else
+# /tmp); nothing touches the network.
+set -uo pipefail
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+BIN=${TAM_BUNDLE_BIN:-$HERE/../../bin/tam-bundle-test}
+[ -x "$BIN" ] || { echo "tests/tam-bundle: $BIN is missing; run make bin/tam-bundle-test" >&2; exit 1; }
+command -v git >/dev/null && command -v make >/dev/null || { echo "tests/tam-bundle/build.sh: needs git and make" >&2; exit 1; }
+
+BASE=$(mktemp -d "${TAM_TEST_DIR:-${TMPDIR:-/tmp}}/tam-bundle-build.XXXXXX")
+trap 'chmod -R u+w "$BASE" 2>/dev/null; rm -rf "$BASE"' EXIT
+echo "Running tam-bundle build tests in $BASE..."
+
+FAILS=0
+pass() { echo "  [PASS] $*"; }
+fail() { echo "  [FAIL] $*" >&2; FAILS=$((FAILS + 1)); }
+expect() {
+    local want=$1 what=$2
+    shift 2
+    "$@" >"$BASE/out" 2>&1
+    local got=$?
+    if [ "$got" -eq "$want" ]; then pass "$what"; else
+        fail "$what (exit $got, wanted $want)"; sed 's/^/        /' "$BASE/out" >&2
+    fi
+}
+
+# Git and builds see none of the user's own settings.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.invalid
+export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.invalid
+export XDG_CACHE_HOME=$BASE/cache
+SLOT=$BASE/slot
+STATE=$BASE/state
+REPOS=$BASE/repos
+LOCK=$BASE/tamlinux.lock
+tb() { "$BIN" --slot "$SLOT" --state "$STATE" "$@"; }
+
+commit_all() { # commit_all REPO MESSAGE DATE
+    git -C "$1" add -A && GIT_AUTHOR_DATE=$3 GIT_COMMITTER_DATE=$3 git -C "$1" commit -q -m "$2"
+    git -C "$1" rev-parse HEAD
+}
+id_of() { local d=$1 n v h
+    n=$(sed -n 's/^name //p' "$d/BUNDLE"); v=$(sed -n 's/^version //p' "$d/BUNDLE")
+    h=$(sed -n 's/^hash sha256://p' "$d/BUNDLE"); echo "$n-$v-${h:0:12}"; }
+
+# ---- Source repositories ---------------------------------------------------
+
+# lib: build-only; installs a greeting into its private prefix.
+mkdir -p "$REPOS/lib" "$REPOS/app" "$REPOS/bad"
+git -C "$REPOS/lib" init -q -b main
+printf 'PREFIX ?= /usr/local\nall:\n\t@true\ninstall:\n\tinstall -d $(DESTDIR)$(PREFIX)/share/lib\n\tinstall -m 644 greeting $(DESTDIR)$(PREFIX)/share/lib/greeting\n' > "$REPOS/lib/Makefile"
+echo "hello from lib v1" > "$REPOS/lib/greeting"
+LIB1=$(commit_all "$REPOS/lib" "lib v1" "2026-01-01T00:00:00Z")
+
+# app: reads lib's greeting at build time through @lib@, records its prefix
+# and SOURCE_DATE_EPOCH, and installs a command, data and a link.
+git -C "$REPOS/app" init -q -b main
+cat > "$REPOS/app/Makefile" <<'EOF'
+PREFIX ?= /usr/local
+all: app
+app: app.in
+	sed -e "s|@GREETING@|$$(cat $(LIB_PREFIX)/share/lib/greeting)|" -e "s|@PREFIX@|$(PREFIX)|" app.in > app
+install: app
+	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/share/app
+	install -m 755 app $(DESTDIR)$(PREFIX)/bin/app
+	install -m 644 data $(DESTDIR)$(PREFIX)/share/app/data
+	echo "$$SOURCE_DATE_EPOCH $$LC_ALL $$TZ" > $(DESTDIR)$(PREFIX)/share/app/env
+	ln -sf ../../bin/app $(DESTDIR)$(PREFIX)/share/app/app-link
+EOF
+printf '#!/bin/sh\necho "@GREETING@ in @PREFIX@"\n' > "$REPOS/app/app.in"
+echo "app data" > "$REPOS/app/data"
+APP1=$(commit_all "$REPOS/app" "app v1" "2026-02-01T00:00:00Z")
+APP1_TIME=$(git -C "$REPOS/app" show -s --format=%ct "$APP1")
+
+# bad: misbehaves as MODE says.
+git -C "$REPOS/bad" init -q -b main
+cat > "$REPOS/bad/Makefile" <<'EOF'
+PREFIX ?= /usr/local
+all:
+	@if [ "$(MODE)" = fail ]; then echo "bad: failing on purpose"; exit 1; fi
+install:
+	if [ "$(MODE)" = outside ]; then install -d $(DESTDIR)/etc && echo x > $(DESTDIR)/etc/bad; fi
+	if [ "$(MODE)" = clash ]; then install -d $(DESTDIR)$(PREFIX)/bin && echo x > $(DESTDIR)$(PREFIX)/bin/app; fi
+	if [ "$(MODE)" = setuid ]; then install -d $(DESTDIR)$(PREFIX)/bin && install -m 4755 /dev/null $(DESTDIR)$(PREFIX)/bin/su-bad; fi
+EOF
+BAD=$(commit_all "$REPOS/bad" "bad" "2026-03-01T00:00:00Z")
+
+# ---- Recipes ----------------------------------------------------------------
+
+RECIPES=$BASE/recipes
+mkdir -p "$RECIPES"
+printf 'format 1\nname demo\nneeds command sh\nafter qml-cache-purge\n' > "$RECIPES/bundle"
+printf 'format 1\ncomponent lib\nbuild make\noutput build-only\n' > "$RECIPES/lib.recipe"
+printf 'format 1\n# app reads lib at build time\ncomponent app\nbuild make\nmake-vars LIB_PREFIX=@lib@\nafter-build lib\n' > "$RECIPES/app.recipe"
+
+# variant NAME: a copy of the recipes to change for one refusal test.
+variant() { rm -rf "$BASE/r-$1"; cp -a "$RECIPES" "$BASE/r-$1"; echo "$BASE/r-$1"; }
+
+# ---- lock ------------------------------------------------------------------
+
+expect 1 "lock refuses a new component without --url" tb lock lib "$LIB1" --lock "$LOCK"
+expect 0 "lock starts a lock file with --url" tb lock lib "$LIB1" --lock "$LOCK" --url "$REPOS/lib"
+sed -i '1a # pinned by hand' "$LOCK"
+expect 2 "lock refuses a short revision without --repos" tb lock app HEAD --lock "$LOCK" --url "$REPOS/app"
+expect 0 "lock resolves a revision in a local clone" tb lock app main --lock "$LOCK" --url "$REPOS/app" --repos "$REPOS"
+grep -q "^component app $REPOS/app $APP1\$" "$LOCK" && pass "the resolved commit is the full id" \
+    || fail "lock line for app: $(cat "$LOCK")"
+grep -q '^# pinned by hand$' "$LOCK" && pass "lock keeps the rest of the file" || fail "comment lost: $(cat "$LOCK")"
+expect 0 "lock with the same commit changes nothing" tb lock lib "$LIB1" --lock "$LOCK"
+grep -q "stays at" "$BASE/out" && pass "lock says the commit stays" || fail "unchanged message: $(cat "$BASE/out")"
+expect 1 "lock refuses a name that is no commit" tb lock app no-such-branch --lock "$LOCK" --repos "$REPOS"
+cp "$LOCK" "$BASE/lock.before"
+expect 0 "lock --dry-run" tb --dry-run lock lib 0000000000000000000000000000000000000000 --lock "$LOCK"
+cmp -s "$LOCK" "$BASE/lock.before" && pass "--dry-run leaves the lock file alone" || fail "dry run changed the lock"
+
+# ---- build -----------------------------------------------------------------
+
+expect 0 "build a bundle from the lock" tb build "$RECIPES" "$LOCK" -o "$BASE/b1" --version 1.0
+expect 0 "the built bundle verifies" tb verify "$BASE/b1"
+B1=$(id_of "$BASE/b1")
+grep -q "^source lib $LIB1\$" "$BASE/b1/BUNDLE" && grep -q "^source app $APP1\$" "$BASE/b1/BUNDLE" \
+    && pass "BUNDLE records every component's commit" || fail "sources: $(cat "$BASE/b1/BUNDLE")"
+grep -q '^tool make ' "$BASE/b1/BUNDLE" && grep -q '^needs command sh$' "$BASE/b1/BUNDLE" \
+    && grep -q '^after qml-cache-purge$' "$BASE/b1/BUNDLE" \
+    && pass "BUNDLE carries tools, needs and steps" || fail "BUNDLE: $(cat "$BASE/b1/BUNDLE")"
+[ -x "$BASE/b1/bin/app" ] && [ -L "$BASE/b1/share/app/app-link" ] && [ ! -e "$BASE/b1/share/lib" ] \
+    && pass "app's files are in the bundle and build-only lib's are not" || fail "bundle tree: $(cd "$BASE/b1" && find . | sort)"
+[ "$(cat "$BASE/b1/share/app/env")" = "$APP1_TIME C UTC" ] \
+    && pass "builds see SOURCE_DATE_EPOCH at the commit time, LC_ALL=C and TZ=UTC" \
+    || fail "build environment: $(cat "$BASE/b1/share/app/env")"
+[ -z "$(git -C "$REPOS/app" ls-files -o)" ] && pass "the build left the source repository alone" || fail "repo changed"
+[ -d "$XDG_CACHE_HOME/tamlinux/tam-bundle/git/app.git" ] && pass "sources came through the cache's mirror" \
+    || fail "no mirror for app"
+
+expect 1 "build refuses an output that exists" tb build "$RECIPES" "$LOCK" -o "$BASE/b1" --version 1.0
+expect 0 "build again from the cache" tb build "$RECIPES" "$LOCK" -o "$BASE/b2" --version 1.0
+[ "$(grep -c 'from the build cache' "$BASE/out")" = 2 ] && pass "both components came from the cache" \
+    || fail "cache use: $(cat "$BASE/out")"
+[ "$(id_of "$BASE/b2")" = "$B1" ] && pass "the cached build has the same hash" || fail "cached hash differs"
+XDG_CACHE_HOME=$BASE/cache2 expect 0 "build with an empty cache from local clones" \
+    tb build "$RECIPES" "$LOCK" -o "$BASE/b3" --version 1.0 --repos "$REPOS"
+[ "$(id_of "$BASE/b3")" = "$B1" ] && pass "building the same lock twice gives the same hash" \
+    || fail "rebuild hash differs: $(id_of "$BASE/b3") vs $B1"
+[ ! -d "$BASE/cache2/tamlinux/tam-bundle/git/app.git" ] && pass "--repos used the local clone, no mirror" \
+    || fail "--repos still made a mirror"
+
+expect 0 "switch the built bundle into its slot" tb --quiet switch "$BASE/b1"
+[ "$("$SLOT/current/bin/app")" = "hello from lib v1 in $SLOT/current" ] \
+    && pass "the live command was built for <slot>/current with lib's data" \
+    || fail "app prints: $("$SLOT/current/bin/app")"
+
+# A new lib commit rebuilds app, which was built against it.
+echo "hello from lib v2" > "$REPOS/lib/greeting"
+LIB2=$(commit_all "$REPOS/lib" "lib v2" "2026-04-01T00:00:00Z")
+tb --quiet lock lib "$LIB2" --lock "$LOCK"
+expect 0 "build after a dependency changed" tb build "$RECIPES" "$LOCK" -o "$BASE/b4" --version 1.1
+grep -q '^building app' "$BASE/out" && pass "a changed after-build component rebuilds its dependants" \
+    || fail "app not rebuilt: $(cat "$BASE/out")"
+grep -q 'lib v2' "$BASE/b4/bin/app" && pass "the rebuilt command has the new data" || fail "b4 app"
+expect 0 "switch to the rebuilt bundle" tb --quiet switch "$BASE/b4"
+expect 0 "and back to the first build" tb --quiet back
+[ "$("$SLOT/current/bin/app")" = "hello from lib v1 in $SLOT/current" ] && pass "rollback restores the first build" \
+    || fail "after back: $("$SLOT/current/bin/app")"
+
+# ---- Refusals ----------------------------------------------------------------
+
+no_output() { [ ! -e "$1" ] && [ ! -e "$1.partial" ]; }
+cp "$LOCK" "$BASE/lock-bad"
+tb --quiet lock bad "$BAD" --lock "$BASE/lock-bad" --url "$REPOS/bad"
+for mode in outside clash fail setuid; do
+    R=$(variant "$mode")
+    printf 'format 1\ncomponent bad\nbuild make\nmake-vars MODE=%s\nafter-build app\n' "$mode" > "$R/bad.recipe"
+    expect 1 "build refuses a component that does '$mode'" tb build "$R" "$BASE/lock-bad" -o "$BASE/x-$mode" --version 9
+    no_output "$BASE/x-$mode" && pass "  ...and leaves no bundle behind" || fail "$mode left output"
+done
+R=$(variant fail2); printf 'format 1\ncomponent bad\nbuild make\nmake-vars MODE=fail\n' > "$R/bad.recipe"
+tb build "$R" "$BASE/lock-bad" -o "$BASE/x-fail2" --version 9 >"$BASE/out" 2>&1
+grep -q 'bad: failing on purpose' "$BASE/out" && pass "a failed make shows the end of its log" \
+    || fail "failure output: $(cat "$BASE/out")"
+
+R=$(variant cycle); printf 'after-build app\n' >> "$R/lib.recipe"
+expect 1 "build refuses an after-build cycle" tb build "$R" "$LOCK" -o "$BASE/x-cycle" --version 9
+R=$(variant prefix); printf 'make-vars PREFIX=/elsewhere\n' >> "$R/app.recipe"
+expect 1 "build refuses a recipe that sets PREFIX" tb build "$R" "$LOCK" -o "$BASE/x-prefix" --version 9
+R=$(variant ref); sed -i 's/^after-build lib$//' "$R/app.recipe"
+expect 1 "build refuses @lib@ without after-build lib" tb build "$R" "$LOCK" -o "$BASE/x-ref" --version 9
+R=$(variant kind); sed -i 's/^build make$/build cmake/' "$R/app.recipe"
+expect 1 "build refuses an unknown build kind" tb build "$R" "$LOCK" -o "$BASE/x-kind" --version 9
+R=$(variant name); sed -i 's/^component app$/component other/' "$R/app.recipe"
+expect 1 "build refuses a recipe whose component is not its file name" tb build "$R" "$LOCK" -o "$BASE/x-name" --version 9
+R=$(variant extra); printf 'format 1\ncomponent extra\nbuild make\n' > "$R/extra.recipe"
+expect 1 "build refuses a recipe the lock does not pin" tb build "$R" "$LOCK" -o "$BASE/x-extra" --version 9
+expect 1 "build refuses a lock line with no recipe" tb build "$RECIPES" "$BASE/lock-bad" -o "$BASE/x-stale" --version 9
+sed 's/^\(component lib [^ ]*\) .*/\1 1234567/' "$LOCK" > "$BASE/lock-short"
+expect 1 "build refuses a lock with a short commit" tb build "$RECIPES" "$BASE/lock-short" -o "$BASE/x-short" --version 9
+sed "s/$LIB2/$(printf '%040d' 0 | tr 0 a)/" "$LOCK" > "$BASE/lock-missing"
+expect 1 "build refuses a commit the source does not have" tb build "$RECIPES" "$BASE/lock-missing" -o "$BASE/x-missing" --version 9
+expect 2 "build needs --version" tb build "$RECIPES" "$LOCK" -o "$BASE/x-nover"
+expect 2 "build needs an absolute slot" "$BIN" --slot rel/slot build "$RECIPES" "$LOCK" -o "$BASE/x-rel" --version 9
+
+if command -v flock >/dev/null; then
+    flock "$XDG_CACHE_HOME/tamlinux/tam-bundle/lock" sleep 5 &
+    lpid=$!
+    sleep 0.3
+    expect 1 "a second build refuses while the cache is in use" tb build "$RECIPES" "$LOCK" -o "$BASE/x-locked" --version 9
+    kill $lpid 2>/dev/null; wait $lpid 2>/dev/null
+fi
+
+if [ $FAILS -eq 0 ]; then echo "All tam-bundle build tests passed."; exit 0; fi
+echo "$FAILS tam-bundle build test(s) failed." >&2
+exit 1

@@ -7,7 +7,7 @@
 #include <tam.h>
 #include <stdio.h>
 
-#define TB_VERSION "0.1.0"
+#define TB_VERSION "0.2.0"
 #define TB_FORMAT 1               /* newest record format this program reads */
 #define TB_DEFAULT_SLOT "/usr/lib/tamlinux"
 #define TB_SYSTEM_STATE "/var/lib/tam-bundle"
@@ -139,6 +139,8 @@ char *tb_state_path(const tb_slot_t *s, const char *leaf); /* caller frees */
 /* Remove a slot-relative tree ("kept/<id>", "staging.<id>"), making its
  * directories writable first. Missing is success. */
 int  tb_remove_tree(const tb_slot_t *s, const char *rel);
+/* The same for `rel` under any directory: `basefd` open on `base`. */
+int  tb_remove_at(int basefd, const char *base, const char *rel);
 
 int  tb_intent_read(const tb_slot_t *s, tb_intent_t *it); /* 1 present, 0 none, -1 error */
 int  tb_intent_write(const tb_slot_t *s, const tb_intent_t *it);
@@ -176,6 +178,93 @@ int  tb_recover(tb_slot_t *s, bool dry_run, bool *steps_due);
 int  tb_run_after(const tb_slot_t *s, const tb_bundle_t *b);
 /* Print missing needs; returns the number missing. */
 size_t tb_needs_check(const tb_bundle_t *b, bool print);
+
+/* ---- Sealing (seal.c) -------------------------------------------------- */
+
+typedef struct {
+    const char *name, *version, *host, *built; /* host NULL: any; built NULL: now */
+    const char *const *sources; size_t nsources; /* "<component> <commit>" */
+    const char *const *tools;   size_t ntools;   /* "<name> <version>" */
+    const char *const *needs;   size_t nneeds;
+    const char *const *after;   size_t nafter;
+} tb_seal_t;
+
+/* Write BUNDLE and MANIFEST for the tree at `dir`; `id` (may be NULL)
+ * receives the bundle id. */
+int  tb_seal(const char *dir, const tb_seal_t *o, char id[256]);
+
+/* ---- Git (git.c) ------------------------------------------------------- */
+
+/* A full commit id: 40 (SHA-1) or 64 (SHA-256) lowercase hex digits. */
+bool tb_valid_commit(const char *s);
+bool tb_git_has(const char *repo, const char *commit);
+/* The full commit `rev` names in `repo`; NULL when it names none. */
+char *tb_git_resolve(const char *repo, const char *rev);
+int  tb_git_commit_time(const char *repo, const char *commit, long long *t);
+/* Make sure `mirror` (a bare repository, created if missing) holds `commit`,
+ * fetching from `url` only when it does not. */
+int  tb_git_fetch(const char *mirror, const char *url, const char *commit);
+/* Export the files of `commit` into the existing empty directory `dest`. */
+int  tb_git_export(const char *repo, const char *commit, const char *dest);
+
+/* ---- Lock files (lock.c) ----------------------------------------------- */
+
+typedef struct {
+    char *name, *url, *commit;
+} tb_lock_entry_t;
+
+typedef struct {
+    tb_lock_entry_t *v;
+    size_t           n;
+} tb_lock_t;
+
+int  tb_lock_read(const char *path, tb_lock_t *l);
+void tb_lock_free(tb_lock_t *l);
+const tb_lock_entry_t *tb_lock_find(const tb_lock_t *l, const char *name);
+
+typedef struct {
+    const char *file;  /* lock file */
+    const char *url;   /* needed to add a component */
+    const char *repos; /* directory of local clones, to resolve a short rev */
+    bool        dry_run;
+} tb_lock_opts_t;
+
+/* Set one component's commit; the only change made to the file. */
+int  tb_lock_set(const char *component, const char *rev, const tb_lock_opts_t *o);
+
+/* ---- Building (build.c, recipe.c) -------------------------------------- */
+
+typedef struct {
+    char  *name;     /* the component */
+    char  *text;     /* the recipe bytes, part of the cache key */
+    size_t len;
+    bool   build_only; /* installs into a private prefix, adds no bundle files */
+    char **vars;  size_t nvars;   /* "NAME=value" make variables */
+    char **deps;  size_t ndeps;   /* after-build components */
+} tb_recipe_t;
+
+typedef struct {
+    char        *name, *host;
+    char       **needs; size_t nneeds;
+    char       **after; size_t nafter;
+    tb_recipe_t *v;     size_t n;  /* in build order */
+} tb_recipes_t;
+
+/* Read `<dir>/bundle` and every `<dir>/<component>.recipe`, check them, and order the
+ * recipes so each comes after the components it names in after-build. */
+int  tb_recipes_read(const char *dir, tb_recipes_t *r);
+void tb_recipes_free(tb_recipes_t *r);
+
+typedef struct {
+    const char *recipes, *lock, *output;
+    const char *version;
+    const char *host;    /* overrides the bundle file's host */
+    const char *repos;   /* directory of local clones tried before the URL */
+    const char *prefix;  /* the live tree the bundle is built for */
+    const char *built;   /* NULL: now */
+} tb_build_opts_t;
+
+int  tb_build(const tb_build_opts_t *o);
 
 /* ---- Test fault points (fault.c) --------------------------------------- */
 

@@ -329,20 +329,20 @@ static int writable_cb(const tam_walk_entry_t *e, void *user) {
     return TAM_WALK_CONTINUE;
 }
 
-int tb_remove_tree(const tb_slot_t *s, const char *rel) {
+int tb_remove_at(int basefd, const char *base, const char *rel) {
     struct stat st;
-    if (fstatat(s->fd, rel, &st, AT_SYMLINK_NOFOLLOW) != 0) return errno == ENOENT ? 0 : -1;
+    if (fstatat(basefd, rel, &st, AT_SYMLINK_NOFOLLOW) != 0) return errno == ENOENT ? 0 : -1;
     const char *slash = strrchr(rel, '/');
-    char parent[300] = ".";
+    char parent[4200] = ".";
     if (slash) snprintf(parent, sizeof parent, "%.*s", (int)(slash - rel), rel);
     const char *name = slash ? slash + 1 : rel;
-    int pfd = openat(s->fd, parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int pfd = openat(basefd, parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (pfd < 0) return -1;
     /* A tree may hold read-only directories; an owner who is not root cannot
      * empty them until they are writable again. */
     if (S_ISDIR(st.st_mode)) {
         if ((st.st_mode & 0700) != 0700) fchmodat(pfd, name, (st.st_mode & 07777) | 0700, 0);
-        char *abs = tam_path_join(s->dir, rel);
+        char *abs = tam_path_join(base, rel);
         if (abs) tam_fs_walk(abs, TAM_WALK_ONE_DEVICE, writable_cb, NULL);
         free(abs);
     }
@@ -351,4 +351,8 @@ int tb_remove_tree(const tb_slot_t *s, const char *rel) {
     close(pfd);
     errno = saved;
     return r;
+}
+
+int tb_remove_tree(const tb_slot_t *s, const char *rel) {
+    return tb_remove_at(s->fd, s->dir, rel);
 }
