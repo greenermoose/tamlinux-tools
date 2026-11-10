@@ -24,7 +24,7 @@ int tb_seal(const char *dir, const tb_seal_t *o, char id[256]) {
         return TB_FAIL;
     }
     tb_manifest_t m;
-    if (tb_manifest_build(dir, &m) != 0) return TB_FAIL;
+    if ((o->format == 2 ? tb_v2_manifest(dir, &m) : tb_manifest_build(dir, &m)) != 0) return TB_FAIL;
 
     char built[64];
     if (o->built) {
@@ -36,13 +36,14 @@ int tb_seal(const char *dir, const tb_seal_t *o, char id[256]) {
         strftime(built, sizeof built, "%Y-%m-%dT%H:%M:%SZ", &tm);
     }
     /* Everything but the hash, in a fixed order; the hash covers it. */
-    tam_str_t head = tam_str_new("format 1\n");
+    tam_str_t head = tam_str_new(o->format == 2 ? "format 2\n" : "format 1\n");
     head = tam_str_cat_printf(head, "name %s\nversion %s\n", o->name, o->version);
     tam_str_t tail = tam_str_new(NULL);
     for (size_t i = 0; i < o->nsources; i++) tail = tam_str_cat_printf(tail, "source %s\n", o->sources[i]);
     for (size_t i = 0; i < o->ntools; i++) tail = tam_str_cat_printf(tail, "tool %s\n", o->tools[i]);
     tail = tam_str_cat_printf(tail, "tool tam-bundle %s\n", TB_VERSION);
     tail = tam_str_cat_printf(tail, "host %s\n", o->host ? o->host : "any");
+    for (size_t i = 0; i < o->ntargets; i++) tail = tam_str_cat_printf(tail, "target %s\n", o->targets[i]);
     for (size_t i = 0; i < o->nneeds; i++) tail = tam_str_cat_printf(tail, "needs %s\n", o->needs[i]);
     for (size_t i = 0; i < o->nafter; i++) tail = tam_str_cat_printf(tail, "after %s\n", o->after[i]);
     tail = tam_str_cat_printf(tail, "built %s\n", built);
@@ -50,7 +51,17 @@ int tb_seal(const char *dir, const tb_seal_t *o, char id[256]) {
     tam_str_t unhashed = tam_str_dup(head);
     unhashed = tam_str_cat(unhashed, tail);
     char hash[TB_HASH_LEN + 1];
-    tb_bundle_hash(unhashed, tam_str_len(unhashed), m.text, m.len, hash);
+    size_t slen = 0;
+    char *settings = NULL, *spath = tam_path_join(dir, "SETTINGS");
+    if (o->format == 2) {
+        settings = tb_read_at(AT_FDCWD, spath, &slen);
+        if (!settings) {
+            settings = strdup("format 1\n"); slen = strlen(settings);
+            if (!tam_fs_write_atomic(spath, settings, slen, 0644)) { free(settings); settings = NULL; }
+        }
+    }
+    tb_hash_settings(unhashed, tam_str_len(unhashed), m.text, m.len, settings, slen, hash);
+    free(settings); free(spath);
     tam_str_t text = tam_str_dup(head);
     text = tam_str_cat_printf(text, "hash %s\n", hash);
     text = tam_str_cat(text, tail);

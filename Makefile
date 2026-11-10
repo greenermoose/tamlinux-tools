@@ -68,6 +68,9 @@ bin/tam-bundle: $(BUNDLE_SRCS) $(BUNDLE_HDRS) bin/.config | bin core-check
 bin/tam-bundle-test: $(BUNDLE_SRCS) $(BUNDLE_HDRS) bin/.config | bin core-check
 	$(CC) $(CFLAGS) -DTAM_BUNDLE_TESTING -fsanitize=address,undefined $(CORE_CFLAGS) $(BUNDLE_SRCS) $(CORE_LIBS) -o $@
 
+bin/tam-bundle-busy-test: tests/tam-bundle/busy.c src/tam-bundle/busy.c src/tam-bundle/util.c $(BUNDLE_HDRS) bin/.config | bin core-check
+	$(CC) $(CFLAGS) -fsanitize=address,undefined $(CORE_CFLAGS) -Isrc/tam-bundle tests/tam-bundle/busy.c src/tam-bundle/busy.c src/tam-bundle/util.c $(CORE_LIBS) -o $@
+
 core-check:
 ifneq ($(CORE_ERROR),)
 	@printf '%s\n' 'tamlinux-tools: cannot build tam-bundle: $(CORE_ERROR).' \
@@ -88,10 +91,12 @@ endif
 
 # tests/tam-bundle works in $$TAM_TEST_DIR (default $$TMPDIR, else /tmp); run
 # it on Btrfs and ext4 directories to cover both file systems.
-test: all bin/tam-bundle-test
+test: all bin/tam-bundle-test bin/tam-bundle-busy-test
 	@tests/run_tests.sh
 	@tests/tam-bundle/run.sh
 	@tests/tam-bundle/build.sh
+	@python3 -B tests/tam-bundle/namespace.py
+	@python3 -B tests/tam-bundle/format2.py
 	@tests/man.sh
 	@if command -v xmllint >/dev/null; then \
 		sed 's|@BINDIR@|/usr/bin|g' data/org.tamlinux.bundle.policy.in | xmllint --noout - \

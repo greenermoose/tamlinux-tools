@@ -17,6 +17,7 @@ model, Fred's guiding prompts verbatim, the commits, and the decisions.
 
 | Date | Work | Tool and model | Evidence |
 | --- | --- | --- | --- |
+| 2026-11-10 | Recovered format-2 draft; correct process selection and isolate signal tests after a compositor termination | Codex 0.167.0; `gpt-6.1-sol` | [Session record](docs/ai/2026-11-10-tam-bundle-format2-safety.md) |
 | 2026-11-09 | `tam-bundle` 0.5.0–0.5.2: recipe targets, pinned files and native bring-up | Codex 0.167.0; `gpt-6.1-sol` | [Session record](docs/ai/2026-11-09-tam-bundle-recipes.md) |
 | 2026-10-09 | Public repository publication and README `libtam` link fix | opencode 1.18.35; `big-pickle` | [Session record](docs/ai/2026-10-09-publish-repository.md) |
 | 2026-10-19 | Find `libtam` with pkg-config; clear error when missing | Claude Code 2.1.304; `claude-opus-5-5` | [Session record](docs/ai/2026-10-19-libtam-pkg-config.md) |

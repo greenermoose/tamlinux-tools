@@ -93,9 +93,9 @@ expect 1 "verify finds a changed file" tb verify "$BASE/tampered"
 sed -i 's/^version 1.0$/version 1.1/' "$BASE/tampered/BUNDLE"
 expect 1 "verify refuses a BUNDLE that no longer matches its hash" tb verify "$BASE/tampered"
 
-cp -a "$BASE/A" "$BASE/newer"; sed -i '1s/format 1/format 2/' "$BASE/newer/BUNDLE"
+cp -a "$BASE/A" "$BASE/newer"; sed -i '1s/format 1/format 3/' "$BASE/newer/BUNDLE"
 expect 1 "a newer record format is refused" tb verify "$BASE/newer"
-grep -q "format 2; this tam-bundle" "$BASE/out" && pass "the refusal names the format and the reader" \
+grep -q "format 3; this tam-bundle" "$BASE/out" && pass "the refusal names the format and the reader" \
     || fail "format refusal message: $(cat "$BASE/out")"
 
 mkdir -p "$BASE/escape/a"; ln -s ../../outside "$BASE/escape/a/link"

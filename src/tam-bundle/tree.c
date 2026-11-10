@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 static bool is_root_record(const tam_walk_entry_t *e) {
-    return e->depth == 1 && (strcmp(e->name, "BUNDLE") == 0 || strcmp(e->name, "MANIFEST") == 0);
+    return e->depth == 1 && (strcmp(e->name, "BUNDLE") == 0 || strcmp(e->name, "MANIFEST") == 0 || strcmp(e->name, "SETTINGS") == 0);
 }
 
 static int hash_at(int dirfd, const char *name, char out[TB_HASH_LEN + 1]) {

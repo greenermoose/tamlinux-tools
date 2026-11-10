@@ -4,9 +4,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 void tb_fault(const char *point) {
 #ifdef TAM_BUNDLE_TESTING
+    static unsigned long sequence;
+    sequence++;
+    const char *trace = getenv("TAM_BUNDLE_TRACE");
+    if (trace) {int fd=open(trace,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600);if(fd>=0){dprintf(fd,"%lu %s\n",sequence,point);close(fd);}}
+    const char *at = getenv("TAM_BUNDLE_FAULT_AT");
+    if (at && strtoul(at,NULL,10)==sequence) _exit(99);
     const char *want = getenv("TAM_BUNDLE_FAULT");
     if (want && strcmp(want, point) == 0) {
         fprintf(stderr, "tam-bundle: test fault at %s\n", point);

@@ -94,7 +94,22 @@ static int bad(const char *what, size_t line, const char *why) {
 static int manifest_line(void *user, size_t line, int format, char **f, size_t n) {
     mparse_t *mp = user;
     tb_manifest_t *m = mp->m;
-    (void)format;
+    if (format == 2) {
+        if (n != 5 || (strcmp(f[0], "t") && strcmp(f[0], "p")))
+            return bad(mp->what, line, "expected: t|p type mode value path");
+        bool placed = !strcmp(f[0], "p");
+        if (placed && !strcmp(f[1], "l")) return bad(mp->what, line, "placed links are forbidden");
+        const char *prefix = placed ? "placed" : "tree";
+        if (!m->n || strncmp(m->v[m->n-1].path, prefix, strlen(prefix))) {
+            char *wrapper[] = {"d", "0755", "-", (char *)prefix};
+            if (manifest_line(user, line, 1, wrapper, 4)) return 1;
+        }
+        char *path = tam_path_join(prefix, f[4]);
+        char *fields[] = {f[1], f[2], f[3], path};
+        int r = path ? manifest_line(user, line, 1, fields, 4) : 1;
+        free(path);
+        return r;
+    }
     if (n != 4) return bad(mp->what, line, "expected: type mode value path");
     tb_entry_t e = {0};
     if (strlen(f[0]) != 1 || !strchr("dfl", f[0][0])) return bad(mp->what, line, "type must be d, f or l");
@@ -157,7 +172,8 @@ int tb_manifest_parse(const char *text, size_t len, const char *what, tb_manifes
     memset(m, 0, sizeof *m);
     mparse_t mp = {m, what};
     tam_rec_error_t err;
-    int r = tam_rec_parse(text, len, 4, TB_FORMAT, manifest_line, &mp, &err);
+    m->format = !strncmp(text, "format 2\n", 9) ? 2 : 1;
+    int r = tam_rec_parse(text, len, m->format == 2 ? 5 : 4, TB_FORMAT, manifest_line, &mp, &err);
     if (r != 0) {
         tb_manifest_free(m);
         return rec_failed(what, r, &err);
@@ -187,7 +203,7 @@ static int set_once(char **slot, const char *v, const char *what, size_t line) {
 static int bundle_line(void *user, size_t line, int format, char **f, size_t n) {
     bparse_t *bp = user;
     tb_bundle_t *b = bp->b;
-    (void)format;
+    b->format = format;
     if (n != 2) return bad(bp->what, line, "expected: key value");
     const char *k = f[0], *v = f[1];
     if (strcmp(k, "name") == 0) {
@@ -202,6 +218,8 @@ static int bundle_line(void *user, size_t line, int format, char **f, size_t n) 
         if (!valid_hash(v)) return bad(bp->what, line, "hash must be sha256:<64 hex>");
         return set_once(&b->hash, v, bp->what, line);
     }
+    if (format == 2 && strcmp(k, "target") == 0)
+        return push(&b->targets, &b->ntargets, v) ? 0 : 1;
     if (strcmp(k, "host") == 0) return set_once(&b->host, v, bp->what, line);
     if (strcmp(k, "built") == 0) return set_once(&b->built, v, bp->what, line);
     if (strcmp(k, "source") == 0) {
@@ -245,6 +263,7 @@ static void free_list(char **list, size_t n) {
 
 void tb_bundle_free(tb_bundle_t *b) {
     free(b->name); free(b->version); free(b->hash); free(b->host); free(b->built);
+    free_list(b->targets, b->ntargets);
     free_list(b->sources, b->nsources);
     free_list(b->tools, b->ntools);
     free_list(b->after, b->nafter);
@@ -274,8 +293,8 @@ int tb_bundle_parse(const char *text, size_t len, const char *what, tb_bundle_t 
     return 0;
 }
 
-void tb_bundle_hash(const char *btext, size_t blen, const char *mtext, size_t mlen,
-                    char out[TB_HASH_LEN + 1]) {
+void tb_hash_settings(const char *btext, size_t blen, const char *mtext, size_t mlen,
+                    const char *settings, size_t slen, char out[TB_HASH_LEN + 1]) {
     tam_sha256_t ctx;
     tam_sha256_init(&ctx);
     for (const char *p = btext, *end = btext + blen; p < end;) {
@@ -286,10 +305,15 @@ void tb_bundle_hash(const char *btext, size_t blen, const char *mtext, size_t ml
         p = next;
     }
     tam_sha256_update(&ctx, mtext, mlen);
+    if (settings) tam_sha256_update(&ctx, settings, slen);
     uint8_t d[TAM_SHA256_LEN];
     tam_sha256_final(&ctx, d);
     memcpy(out, "sha256:", 7);
     tam_sha256_hex(d, out + 7);
+}
+
+void tb_bundle_hash(const char *b, size_t bn, const char *m, size_t mn, char out[TB_HASH_LEN+1]) {
+    tb_hash_settings(b, bn, m, mn, NULL, 0, out);
 }
 
 int tb_tree_read(int dirfd, const char *dir, tb_bundle_t *b, tb_manifest_t *m) {
@@ -318,8 +342,17 @@ int tb_tree_read(int dirfd, const char *dir, tb_bundle_t *b, tb_manifest_t *m) {
         return -1;
     }
     char hash[TB_HASH_LEN + 1];
-    tb_bundle_hash(btext, blen, mtext, mlen, hash);
-    if (strcmp(hash, b->hash) != 0) {
+    size_t slen = 0;
+    char *settings = NULL;
+    if (b->format == 2) {
+        char spath[4200];
+        snprintf(spath, sizeof spath, "%s/SETTINGS", dir);
+        settings = tb_read_at(dirfd, spath, &slen);
+    }
+    tb_hash_settings(btext, blen, mtext, mlen, settings, slen, hash);
+    bool formats_ok = b->format == m->format && (b->format == 1 || settings);
+    free(settings);
+    if (!formats_ok || strcmp(hash, b->hash) != 0) {
         tb_err("%s: BUNDLE and MANIFEST do not match the recorded hash", dir);
         tb_bundle_free(b);
         tb_manifest_free(m);

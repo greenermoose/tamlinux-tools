@@ -8,8 +8,8 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-#define TB_VERSION "0.5.2"
-#define TB_FORMAT 1               /* newest record format this program reads */
+#define TB_VERSION "0.6.0"
+#define TB_FORMAT 2               /* newest record format this program reads */
 #define TB_DEFAULT_SLOT "/usr/lib/tamlinux"
 #define TB_SYSTEM_STATE "/var/lib/tam-bundle"
 #define TB_HASH_LEN (7 + TAM_SHA256_HEX_LEN) /* "sha256:" + hex */
@@ -33,6 +33,7 @@ typedef struct {
 } tb_entry_t;
 
 typedef struct {
+    int format;
     tb_entry_t *v;
     size_t      n, cap;
     char       *text; /* the MANIFEST bytes as read or written */
@@ -46,6 +47,8 @@ typedef struct {
 } tb_need_t;
 
 typedef struct {
+    int format;
+    char **targets; size_t ntargets;
     char      *name, *version, *hash, *host, *built;
     char     **sources; size_t nsources; /* "<component> <commit>" */
     char     **tools;   size_t ntools;
@@ -215,6 +218,8 @@ bool tb_test_pkexec(void);
 /* ---- Sealing (seal.c) -------------------------------------------------- */
 
 typedef struct {
+    int format;
+    const char *const *targets; size_t ntargets;
     const char *name, *version, *host, *built; /* host NULL: any; built NULL: now */
     const char *const *sources; size_t nsources; /* "<component> <commit>" */
     const char *const *tools;   size_t ntools;   /* "<name> <version>" */
@@ -352,4 +357,15 @@ void  tb_err(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void  tb_note(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 extern bool tb_quiet;
 
+/* Format 2 product transactions. Paths are rooted at root (default /).
+ * Profile commands are supplied by the rootstock, never the bundle. */
+int tb_v2_main(const char *root, const char *cmd, const char *arg, bool dry,
+               bool if_pending, bool yes);
+int tb_v2_verify(const char *dir);
+int tb_archive_unpack(const char *archive, const char *dest);
+int tb_archive_pack(const char *dir, const char *archive);
+int tb_busy(const char *root, const char *old, const tb_manifest_t *m, bool stop);
+int tb_v2_manifest(const char *dir, tb_manifest_t *m);
+void tb_hash_settings(const char *b, size_t bn, const char *m, size_t mn,
+                      const char *settings, size_t sn, char out[TB_HASH_LEN+1]);
 #endif

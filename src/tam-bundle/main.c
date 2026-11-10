@@ -12,6 +12,10 @@ static const char usage_text[] =
     "usage: tam-bundle [options] <command> [arguments]\n"
     "\n"
     "Commands:\n"
+    "  install <bundle>             prepare a format 2 directory or .tbundle\n"
+    "  apply [--if-pending]         finish the prepared transaction before session use\n"
+    "  cancel                       disarm staging or ready work\n"
+    "  pack <dir> -o FILE           make a portable format 2 archive\n"
     "  seal <dir> --name N --version V [...]   record a built tree as a bundle\n"
     "  verify <dir>                 check a bundle, kept or live tree against its MANIFEST\n"
     "  needs <dir>                  report missing native commands or files\n"
@@ -29,6 +33,8 @@ static const char usage_text[] =
     "  lock <component> <commit>    set one component's commit in a lock file\n"
     "\n"
     "Options:\n"
+    "  --root DIR      format 2 installation root (default /)\n"
+    "  --format 1|2    seal format (default 1); --target TEXT records a target\n"
     "  --slot DIR      slot directory (default " TB_DEFAULT_SLOT ")\n"
     "  --state DIR     state directory (default by user; see tam-bundle(1))\n"
     "  --dry-run       say what would change, change nothing\n"
@@ -51,7 +57,10 @@ static int usage(const char *why) {
 }
 
 typedef struct {
-    const char *slot, *state;
+    const char *slot, *state, *root;
+    int format;
+    bool if_pending;
+    const char *targets[16]; size_t ntargets;
     tb_switch_opts_t sw;
     bool yes;
     /* seal */
@@ -71,6 +80,7 @@ typedef struct {
 static int cmd_seal(const opts_t *o) {
     if (o->nargs != 2 || !o->name || !o->version) return usage("seal needs a directory, --name and --version");
     tb_seal_t so = {
+        .format = o->format, .targets = o->targets, .ntargets = o->ntargets,
         .name = o->name, .version = o->version, .host = o->host, .built = o->built,
         .sources = o->sources, .nsources = o->nsources, .tools = o->tools, .ntools = o->ntools,
         .needs = o->needs, .nneeds = o->nneeds, .after = o->after, .nafter = o->nafter,
@@ -123,6 +133,7 @@ static int cmd_verify(const opts_t *o) {
     tb_bundle_t b;
     tb_manifest_t m;
     if (tb_tree_read(AT_FDCWD, o->args[1], &b, &m) != 0) return TB_FAIL;
+    if (b.format == 2) { tb_bundle_free(&b); tb_manifest_free(&m); return tb_v2_verify(o->args[1]); }
     tb_check_t c = {0};
     int r = tb_tree_check(o->args[1], &m, NULL, true, &c);
     size_t problems = c.edited + c.missing + c.extra;
@@ -453,6 +464,10 @@ int main(int argc, char **argv) {
             printf("tam-bundle %s (record format %d)\n", TB_VERSION, TB_FORMAT);
             return TB_OK;
         }
+        else if (strcmp(a, "--root") == 0) { VALUE(); o.root = v; }
+        else if (strcmp(a, "--format") == 0) { VALUE(); if(strcmp(v,"1") && strcmp(v,"2")) return usage("format must be 1 or 2"); o.format=atoi(v); }
+        else if (strcmp(a, "--target") == 0) { VALUE(); if(!add(o.targets,&o.ntargets,16,v)) return usage("too many targets"); }
+        else if (strcmp(a, "--if-pending") == 0) o.if_pending=true;
         else if (strcmp(a, "--slot") == 0) { VALUE(); o.slot = v; }
         else if (strcmp(a, "--state") == 0) { VALUE(); o.state = v; o.state_i = i; }
         else if (strcmp(a, "--dry-run") == 0) o.sw.dry_run = true;
@@ -480,6 +495,19 @@ int main(int argc, char **argv) {
     if (!o.nargs) return usage("no command given");
     const char *cmd = o.args[0];
 
+    if (!strcmp(cmd, "pack")) {
+        if (o.nargs != 2 || !o.output) return usage("pack needs a directory and -o ARCHIVE");
+        if (tb_v2_verify(o.args[1])) return TB_FAIL;
+        char *output = absolute(o.output, false);
+        int r = output ? tb_archive_pack(o.args[1], output) : -1;
+        free(output); return r ? TB_FAIL : TB_OK;
+    }
+    if (!strcmp(cmd,"seal")) return cmd_seal(&o);
+    if (!strcmp(cmd,"verify")) return cmd_verify(&o);
+    if (o.root || !strcmp(cmd,"install") || !strcmp(cmd,"prepare") || !strcmp(cmd,"apply") || !strcmp(cmd,"cancel") || !strcmp(cmd,"restore")) {
+        if (o.nargs > 2) return usage("too many transaction arguments");
+        return tb_v2_main(o.root ? o.root : "/", cmd, o.nargs==2 ? o.args[1] : NULL, o.sw.dry_run, o.if_pending, o.yes);
+    }
     if (strcmp(cmd, "seal") == 0) return cmd_seal(&o);
     if (strcmp(cmd, "verify") == 0) return cmd_verify(&o);
     if (strcmp(cmd, "needs") == 0) return cmd_needs(&o);

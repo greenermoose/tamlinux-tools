@@ -135,6 +135,65 @@ say exactly which bundle is live.
 A previous live tree, kept whole for rollback at
 .IB slot /kept/ bundle-id /\fR.
 .SH COMMANDS
+.SS Product transactions (format 2, development interface)
+.TP
+.BI install " bundle"
+Prepare a format 2 directory or portable
+.B .tbundle
+archive without replacing live files.
+The bundle contains
+.BR BUNDLE ,
+.BR MANIFEST ,
+.BR SETTINGS ,
+.B tree/
+and
+.BR placed/ .
+A trusted rootstock profile supplies permitted placement directories and
+post-install actions.
+.TP
+.B apply
+Apply a ready transaction before starting the desktop, or resume an
+interrupted apply forward.
+The transaction remains recorded through required post-install steps.
+Without
+.BR \-\-yes ,
+old-file users leave the transaction ready.
+With it, matching processes receive SIGTERM, followed by SIGKILL if they
+remain after five seconds.
+Processes match only complete paths in the selected installation's old
+version tree or placed files, found through exe, arguments, mappings,
+working directory or open descriptors.
+On the live root, a running Hyprland blocks apply even with
+.BR \-\-yes ;
+the graphical-session guard never sends it a signal.
+.TP
+.B cancel
+Disarm a staging or ready transaction.
+An applying or activating transaction must finish forward.
+.TP
+.BI pack " dir " \-o " archive"
+Verify a format 2 bundle and create its portable archive.
+.TP
+.BI \-\-root " dir"
+Select the format 2 installation root (default
+.BR / ).
+Product state is under
+.BR var/lib/tamlinux ;
+versions are under
+.BR usr/lib/tamlinux/version .
+An alternate root confines file placement and process matching to that
+installation; an executable name alone never authorizes a signal.
+.TP
+.BI \-\-format " 1|2"
+Select the seal format; the default remains format 1 for older recipes.
+.TP
+.BI \-\-target " text"
+Add a target description to a format 2 BUNDLE.
+Native ownership queries and target-runtime validation remain later work.
+.TP
+.B \-\-if-pending
+With apply, do nothing when no transaction is pending.
+An unfinished staging transaction is reported without applying it.
 .SS Building
 .TP
 .BI build " recipes lock " \-o " dir " \-\-version " V"
