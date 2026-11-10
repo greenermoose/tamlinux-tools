@@ -562,7 +562,10 @@ the trigger, one call to `tam-bundle apply --if-pending`:
 
    tam-bundle never stops the user's own processes without that yes. On
    no (the default), the command goes on with the old version as it is,
-   the switch stays armed, and it is offered again next time.
+   the switch stays **ready**, and it is offered again next time. The
+   trigger records which units it stopped; on no, or when the system part
+   refuses or fails, it starts them again from the old version before the
+   menu or desktop goes on.
 3. Run `pkexec tam-bundle apply` (the system part). A polkit rule
    from the tam nut allows that one action, `org.tamlinux.bundle.apply`,
    without a password for a user in an active local session. It grants
@@ -604,7 +607,24 @@ Both run the same `tam-bundle apply`. Neither is a bundle file.
    command line and open files are what catch them; the shell service, for
    example, runs as `python3 /usr/lib/tamlinux/current/share/...`. The
    user-side trigger runs the same check first, so a yes can come before
-   this one refuses.
+   this one refuses. **The launcher chain is exempt, by process id, not by
+   name:** the process running the trigger, its direct ancestors
+   (`tam-desktop`, `tam-start`, the login shell) and the `pkexec` and
+   `tam-bundle` processes it started. An unrelated old `tam-start` on
+   another console is still caught. After apply, the exempted command
+   re-executes itself as the new version.
+
+   **New launches during apply.** A scan is a snapshot, so it is a
+   diagnostic, not a guarantee. While the system record is **applying**,
+   every Tamlinux program built on `libtam` refuses to start ("Tamlinux is
+   switching versions; try again in a moment"); the check is one stat per
+   program start, made only when a record exists. `tam-start` and
+   `tam-desktop` wait for **complete** (see "The transaction"). Shell and
+   Python programs that do not use `libtam` are not guarded: with no
+   session running, the timers stopped and the renames taking about a
+   tenth of a second, that window is small and is accepted for the first
+   version. A full guarantee would need the renames to happen only at
+   boot, which Q1 ruled out.
 3. Set the system record to **applying** and sync.
 4. For each placed change: rename the staged file over the destination
    (`rename(2)` replaces it in one atomic step, so the path always shows a
