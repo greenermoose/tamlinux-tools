@@ -55,5 +55,14 @@
   installed build having no stand-in setting.
 - A staged `make install DESTDIR=... PREFIX=/usr` gave the policy with
   `exec.path` `/usr/bin/tam-bundle`, and `make uninstall` removed it.
-- Not yet tried with the real pkexec and a root-owned slot: that writes
-  under `/var/lib` and waits for Fred's approval.
+- **With the real pkexec**, after Fred's "Do that test now": two small
+  bundles naming `user-units-reload`, in a probe slot under `/var/tmp`
+  (root's), one administrator prompt each for switch, switch and back.
+  Each made the right bundle live with root-owned files, the second
+  reused its unchanged file by cloning, and `status` and `check` worked
+  as the user. Each root run logged the step deferred, and the user's
+  journal showed the user manager reloading at the same second, called
+  by `systemctl` from the user's session. The probe slot and its state
+  were then removed.
+- **Gap found:** the user's run of a deferred step leaves no log line,
+  because the log belongs to root.
