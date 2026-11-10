@@ -598,6 +598,13 @@ or
 .BI @ component @
 names a build-only component's prefix), and
 .BI after\-build " component ..."\fR.
+.B make\-targets
+lists targets for the first make (default: the Makefile's default target);
+.B install\-targets
+lists targets for the second (default:
+.BR install ).
+Each list runs in one invocation with the same variables and prefix.
+Targets must be names, never options or variable assignments.
 A recipe may not set
 .BR PREFIX ,
 .B DESTDIR
@@ -615,6 +622,17 @@ and
 lines, and
 .B "index man"
 to build the manual index.
+.B file
+.I packaging-path tree-path
+adds a regular file from the packaging repository's HEAD commit as mode
+0644. Paths must be relative; the destination may contain spaces.
+Parents are created without following links. Existing files, links as
+sources, and destinations BUNDLE and MANIFEST are refused.
+When recipes are in Git, the bundle file, recipes and lock must match
+HEAD in the same repository, and BUNDLE records
+.BR "source packaging <commit>" .
+Extra files come from that commit, regardless of working-copy edits.
+Scratch recipes outside Git cannot use file entries.
 .TP
 .B BUNDLE
 Identity:

@@ -9,7 +9,9 @@
   bundle (`index man`). The manual page `man/tam-bundle.1` is installed
   with it and checked against `--help` by `make test`, and the `tam` corpus
   has a page. 0.4.1 makes every changing command recover first (see
-  "Interruption recovery"). Still to come: the native adapter package.
+  "Interruption recovery"). 0.5.0 adds explicit make and install targets,
+  pinned packaging files and the packaging source commit. Still to come:
+  full product recipes and the native adapter package.
 - **Component:** `tamlinux-tools`, its own version number, C on `libtam`,
   linked statically.
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
@@ -209,6 +211,8 @@ format 1
 component libtam
 build make
 output build-only
+make-targets all display session
+install-targets install install-display install-session
 ```
 
 `build make` means: export the commit with `git archive` into a clean
@@ -221,6 +225,13 @@ prefix. Each build sees only `PATH` from the caller, plus
 `HOME` and `TMPDIR`, and `PKG_CONFIG_PATH` naming its build-only
 dependencies. A recipe may not set `PREFIX`, `DESTDIR` or
 `SOURCE_DATE_EPOCH`.
+
+`make-targets` lists the targets for the first make (default: the
+Makefile's default target); `install-targets` lists the targets for the
+second (default: `install`). Both accept target names only, never options
+or variable assignments. Each list runs in one make invocation, with the
+same prefix and variables. The recipe bytes, including these lists, are
+part of the build cache key.
 
 **Fixed build paths.** A build directory can end up inside what is built:
 debug information records it, a static library carries it into every
@@ -262,9 +273,25 @@ host any
 needs command quickshell   arch=quickshell void=quickshell
 index man
 after shell-restart
+file notes/tamlinux-0.7.0.txt share/tamlinux/version-notes.txt
 ```
 
 `index man` asks `build` for the manual index (see "The manual index").
+
+`file <packaging path> <tree path>` adds a regular data file from the
+packaging repository's HEAD commit, installed as mode 0644. Both paths
+are relative; the source is a single word and the destination may contain
+spaces. Parents are created without following links, and existing output
+is never replaced. Links, missing files and the reserved destinations
+`BUNDLE` and `MANIFEST` are refused.
+
+For recipes inside a Git work tree, the bundle file, component recipes
+and lock must all match HEAD in that same repository. `BUNDLE` records
+`source packaging <commit>` alongside the component sources. Extra files
+always come from that commit, even if their working copies have edits.
+Standalone scratch recipes outside Git still work, without a packaging
+source line, but cannot use `file`. `packaging` is reserved as a component
+name when recording a packaging source.
 
 **`BUNDLE`** (identity):
 

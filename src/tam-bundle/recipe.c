@@ -7,6 +7,7 @@
  *   needs command quickshell arch=quickshell   (any number)
  *   index man                                  (optional: build the manual index)
  *   after shell-restart                        (any number)
+ *   file notes/version.txt share/tamlinux/version-notes.txt
  *
  * <dir>/<component>.recipe says how to build one component:
  *   format 1
@@ -15,6 +16,8 @@
  *   output bundle | build-only                 (default bundle)
  *   make-vars LIBTAM_PREFIX=@libtam@           (any number; NAME=value ...)
  *   after-build libtam                         (any number)
+ *   make-targets all display session            (optional)
+ *   install-targets install install-display install-session
  *
  * "@<component>@" in a make variable is that build-only component's private
  * prefix; it must be named in after-build. */
@@ -82,6 +85,22 @@ static int bundle_line(void *user, size_t line, int format, char **f, size_t n) 
         return (r->host = strdup(f[1])) ? 0 : 1;
     }
     if (strcmp(f[0], "needs") == 0) return push(&r->needs, &r->nneeds, f[1]) ? 0 : 1;
+    if (strcmp(f[0], "file") == 0) {
+        char *space = strchr(f[1], ' ');
+        if (!space) return bad(bp->what, line, "expected: file <packaging path> <tree path>");
+        *space++ = '\0';
+        while (*space == ' ') space++;
+        if (!tam_path_is_safe_rel(f[1]) || !tam_path_is_safe_rel(space) ||
+            strcmp(space, "BUNDLE") == 0 || strcmp(space, "MANIFEST") == 0)
+            return bad(bp->what, line, "file needs safe relative paths, not BUNDLE or MANIFEST");
+        tb_recipe_file_t *grown = realloc(r->files, (r->nfiles + 1) * sizeof *grown);
+        if (!grown) return 1;
+        r->files = grown;
+        tb_recipe_file_t *file = &r->files[r->nfiles++];
+        file->source = strdup(f[1]);
+        file->path = strdup(space);
+        return file->source && file->path ? 0 : 1;
+    }
     if (strcmp(f[0], "index") == 0) {
         if (strcmp(f[1], "man") != 0) return bad(bp->what, line, "index takes man");
         if (r->index_man) return bad(bp->what, line, "repeated index man");
@@ -92,7 +111,7 @@ static int bundle_line(void *user, size_t line, int format, char **f, size_t n) 
         if (!tb_valid_step(f[1])) return bad(bp->what, line, "unknown post-install step");
         return push(&r->after, &r->nafter, f[1]) ? 0 : 1;
     }
-    return bad(bp->what, line, "unknown key (name, host, needs, index, after)");
+    return bad(bp->what, line, "unknown key (name, host, needs, index, after, file)");
 }
 
 /* ---- A recipe ---------------------------------------------------------- */
@@ -146,7 +165,20 @@ static int recipe_line(void *user, size_t line, int format, char **f, size_t n) 
     }
     if (strcmp(k, "make-vars") == 0) return each_token(v, rp, line, true);
     if (strcmp(k, "after-build") == 0) return each_token(v, rp, line, false);
-    return bad(rp->what, line, "unknown key (component, build, output, make-vars, after-build)");
+    if (strcmp(k, "make-targets") == 0 || strcmp(k, "install-targets") == 0) {
+        bool install = strcmp(k, "install-targets") == 0;
+        char *copy = strdup(v);
+        if (!copy) return 1;
+        int result = 0;
+        for (char *save = NULL, *t = strtok_r(copy, " \t", &save); t && !result; t = strtok_r(NULL, " \t", &save)) {
+            if (!tb_valid_name(t) || t[0] == '-') result = bad(rp->what, line, "targets must be names, never make options or variable assignments");
+            else if (!push(install ? &rp->rc->installs : &rp->rc->targets,
+                           install ? &rp->rc->ninstalls : &rp->rc->ntargets, t)) result = 1;
+        }
+        free(copy);
+        return result;
+    }
+    return bad(rp->what, line, "unknown key (component, build, output, make-vars, after-build, make-targets, install-targets)");
 }
 
 static void recipe_free(tb_recipe_t *rc) {
@@ -154,6 +186,8 @@ static void recipe_free(tb_recipe_t *rc) {
     free(rc->text);
     free_list(rc->vars, rc->nvars);
     free_list(rc->deps, rc->ndeps);
+    free_list(rc->targets, rc->ntargets);
+    free_list(rc->installs, rc->ninstalls);
     memset(rc, 0, sizeof *rc);
 }
 
@@ -162,6 +196,11 @@ void tb_recipes_free(tb_recipes_t *r) {
     free(r->host);
     free_list(r->needs, r->nneeds);
     free_list(r->after, r->nafter);
+    for (size_t i = 0; i < r->nfiles; i++) {
+        free(r->files[i].source);
+        free(r->files[i].path);
+    }
+    free(r->files);
     for (size_t i = 0; i < r->n; i++) recipe_free(&r->v[i]);
     free(r->v);
     memset(r, 0, sizeof *r);

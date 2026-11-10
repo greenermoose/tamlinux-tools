@@ -47,7 +47,7 @@ BIN = bin/tam-file-select bin/tam-bundle
 # with. The stamp changes with that configuration and forces a rebuild.
 CONFIG := $(CC) $(CFLAGS) $(INCLUDES) $(LIBS) $(CORE_CFLAGS) $(CORE_LIBS)
 
-.PHONY: all clean test install uninstall libtam-check core-check FORCE
+.PHONY: all clean test install install-file-select install-bundle uninstall libtam-check core-check FORCE
 
 all: bin $(BIN)
 
@@ -108,9 +108,16 @@ clean:
 POLICY = share/polkit-1/actions/org.tamlinux.bundle.policy
 MANDIR ?= $(PREFIX)/share/man
 
-install: all
+install: install-file-select install-bundle
+
+install-file-select: bin/tam-file-select
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 755 bin/tam-file-select $(DESTDIR)$(PREFIX)/bin/
+
+# Native adapters install the rollback tool outside the product bundle.
+install-bundle: bin/tam-bundle
 	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/share/polkit-1/actions $(DESTDIR)$(MANDIR)/man1
-	install -m 755 $(BIN) $(DESTDIR)$(PREFIX)/bin/
+	install -m 755 bin/tam-bundle $(DESTDIR)$(PREFIX)/bin/
 	install -m 644 man/tam-bundle.1 $(DESTDIR)$(MANDIR)/man1/
 	sed 's|@BINDIR@|$(PREFIX)/bin|g' data/org.tamlinux.bundle.policy.in > $(DESTDIR)$(PREFIX)/$(POLICY)
 	chmod 644 $(DESTDIR)$(PREFIX)/$(POLICY)

@@ -58,6 +58,43 @@ char *tb_git_resolve(const char *repo, const char *rev) {
     return out;
 }
 
+char *tb_git_root(const char *dir) {
+    const char *argv[] = {"git", "-C", dir, "rev-parse", "--show-toplevel", NULL};
+    char *out = NULL;
+    if (!git(argv, GIT_QUICK_MS, NULL, &out)) return NULL;
+    out[strcspn(out, "\n")] = '\0';
+    return out;
+}
+
+char *tb_git_file(const char *repo, const char *commit, const char *path, size_t *len) {
+    if (!tam_path_is_safe_rel(path) || !tb_valid_commit(commit)) return NULL;
+    /* ls-tree takes a literal pathspec: no wildcard can select another file.
+     * Accept regular blobs only, never links, trees or submodules. */
+    const char *ls[] = {"git", "--literal-pathspecs", "-C", repo, "ls-tree", "-z", commit, "--", path, NULL};
+    char *entry = NULL;
+    if (!git(ls, GIT_QUICK_MS, "cannot read packaging file mode", &entry)) return NULL;
+    bool regular = strncmp(entry, "100644 blob ", 12) == 0 || strncmp(entry, "100755 blob ", 12) == 0;
+    free(entry);
+    if (!regular) {
+        tb_err("packaging file %s must be a regular file in commit %.12s", path, commit);
+        return NULL;
+    }
+    char *spec = malloc(strlen(commit) + strlen(path) + 2);
+    if (!spec) return NULL;
+    sprintf(spec, "%s:%s", commit, path);
+    const char *show[] = {"git", "-C", repo, "show", spec, NULL};
+    tam_exec_result_t r = tam_exec(show, GIT_QUICK_MS);
+    free(spec);
+    char *out = NULL;
+    if (r.exit_code == 0) {
+        out = r.stdout_buf;
+        *len = r.stdout_len;
+        r.stdout_buf = NULL;
+    } else tb_err("cannot read packaging file %s%s", path, r.truncated ? " (exceeds 16 MiB)" : "");
+    tam_exec_result_free(&r);
+    return out;
+}
+
 int tb_git_commit_time(const char *repo, const char *commit, long long *t) {
     const char *argv[] = {"git", "-C", repo, "show", "-s", "--format=%ct", commit, NULL};
     char *out = NULL;

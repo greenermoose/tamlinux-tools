@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-#define TB_VERSION "0.4.1"
+#define TB_VERSION "0.5.0"
 #define TB_FORMAT 1               /* newest record format this program reads */
 #define TB_DEFAULT_SLOT "/usr/lib/tamlinux"
 #define TB_SYSTEM_STATE "/var/lib/tam-bundle"
@@ -238,6 +238,10 @@ int  tb_git_commit_time(const char *repo, const char *commit, long long *t);
 int  tb_git_fetch(const char *mirror, const char *url, const char *commit);
 /* Export the files of `commit` into the existing empty directory `dest`. */
 int  tb_git_export(const char *repo, const char *commit, const char *dest);
+/* Read a regular file from an exact commit, never from the work tree. */
+char *tb_git_file(const char *repo, const char *commit, const char *path, size_t *len);
+/* Repository containing dir, or NULL when it is outside a Git work tree. */
+char *tb_git_root(const char *dir);
 
 /* ---- Lock files (lock.c) ----------------------------------------------- */
 
@@ -273,13 +277,20 @@ typedef struct {
     bool   build_only; /* installs into a private prefix, adds no bundle files */
     char **vars;  size_t nvars;   /* "NAME=value" make variables */
     char **deps;  size_t ndeps;   /* after-build components */
+    char **targets; size_t ntargets; /* make-targets; empty means default */
+    char **installs; size_t ninstalls; /* install-targets; default install */
 } tb_recipe_t;
+
+typedef struct {
+    char *source, *path; /* packaging repository path, bundle tree path */
+} tb_recipe_file_t;
 
 typedef struct {
     char        *name, *host;
     char       **needs; size_t nneeds;
     char       **after; size_t nafter;
     bool         index_man;        /* `index man`: build share/man's index */
+    tb_recipe_file_t *files; size_t nfiles;
     tb_recipe_t *v;     size_t n;  /* in build order */
 } tb_recipes_t;
 

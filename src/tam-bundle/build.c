@@ -36,6 +36,7 @@ typedef struct {
     comp_t                *c;
     size_t                 n;
     char                  *cache;  /* $XDG_CACHE_HOME/tamlinux/tam-bundle */
+    char                  *packaging, *packaging_commit;
     char                  *tools[4];
     size_t                 ntools;
 } build_t;
@@ -295,17 +296,23 @@ static int build_one(build_t *b, comp_t *c) {
     snprintf(jobs, sizeof jobs, "-j%ld", cpus > 0 ? cpus : 1);
 
     for (int pass = 0; pass < 2; pass++) {
-        const char *argv[160];
+        size_t ntargets = pass ? rc->ninstalls : rc->ntargets;
+        char **targets = pass ? rc->installs : rc->targets;
+        const char **argv = calloc(rc->nvars + ntargets + 9, sizeof *argv);
+        if (!argv) goto out;
         size_t a = 0;
         argv[a++] = "make";
         argv[a++] = "-C";
         argv[a++] = w_src;
-        argv[a++] = pass == 0 ? jobs : "install";
-        for (size_t i = 0; i < rc->nvars && a < 155; i++) argv[a++] = vars[i];
+        if (pass == 0) argv[a++] = jobs;
+        if (ntargets) for (size_t i = 0; i < ntargets; i++) argv[a++] = targets[i];
+        else if (pass) argv[a++] = "install";
+        for (size_t i = 0; i < rc->nvars; i++) argv[a++] = vars[i];
         argv[a++] = prefix_var;
         if (pass == 1 && !rc->build_only) argv[a++] = dest_var;
         argv[a] = NULL;
         int st = run_logged(argv, env, logfd, binds, nbinds);
+        free(argv);
         if (st != 0) {
             tb_err("%s: make%s failed (exit %d); the end of %s:", rc->name, pass ? " install" : "", st, log);
             show_log_tail(log);
@@ -469,6 +476,96 @@ static int merge(build_t *b, const char *tree) {
 
 /* ---- tb_build ---------------------------------------------------------- */
 
+/* Packaging inputs in a Git work tree must match one commit. The commit
+ * supplies extra files too, so dirty or untracked files cannot enter a
+ * bundle whose identity claims otherwise. Standalone scratch recipes are
+ * still useful, but cannot use `file` without a packaging commit. */
+static int packaging_input(build_t *b, const char *path) {
+    char *abs = realpath(path, NULL);
+    size_t rootlen = strlen(b->packaging);
+    if (!abs || strncmp(abs, b->packaging, rootlen) != 0 || abs[rootlen] != '/') {
+        tb_err("%s must be inside the packaging repository %s", path, b->packaging);
+        free(abs);
+        return -1;
+    }
+    size_t committed_len = 0, working_len = 0;
+    char *committed = tb_git_file(b->packaging, b->packaging_commit, abs + rootlen + 1, &committed_len);
+    char *working = tb_read_at(AT_FDCWD, abs, &working_len);
+    bool same = committed && working && committed_len == working_len && memcmp(committed, working, working_len) == 0;
+    free(abs); free(committed); free(working);
+    if (!same) tb_err("%s must be committed at packaging %.12s before building", path, b->packaging_commit);
+    return same ? 0 : -1;
+}
+
+static int packaging_prepare(build_t *b) {
+    b->packaging = tb_git_root(b->o->recipes);
+    if (!b->packaging) {
+        if (!b->r.nfiles) return 0;
+        tb_err("bundle file entries need recipes and lock in a committed packaging repository");
+        return -1;
+    }
+    b->packaging_commit = tb_git_resolve(b->packaging, "HEAD");
+    if (!b->packaging_commit || packaging_input(b, b->o->lock) != 0) return -1;
+    char *path = tam_path_join(b->o->recipes, "bundle");
+    int result = path ? packaging_input(b, path) : -1;
+    free(path);
+    for (size_t i = 0; i < b->r.n && result == 0; i++) {
+        char *leaf = NULL;
+        if (asprintf(&leaf, "%s.recipe", b->r.v[i].name) < 0) return -1;
+        path = tam_path_join(b->o->recipes, leaf);
+        free(leaf);
+        result = path ? packaging_input(b, path) : -1;
+        free(path);
+        if (strcmp(b->r.v[i].name, "packaging") == 0) {
+            tb_err("packaging is reserved for the packaging source commit");
+            return -1;
+        }
+    }
+    return result;
+}
+
+/* Descend destination parents without following links, including links
+ * installed by components. Extra files never replace component output. */
+static int packaging_files(build_t *b, const char *tree) {
+    for (size_t i = 0; i < b->r.nfiles; i++) {
+        tb_recipe_file_t *file = &b->r.files[i];
+        size_t len = 0;
+        char *data = tb_git_file(b->packaging, b->packaging_commit, file->source, &len);
+        if (!data) return -1;
+        char *path = strdup(file->path), *save = NULL;
+        int fd = open(tree, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        int result = path && fd >= 0 ? 0 : -1;
+        char *part = path ? strtok_r(path, "/", &save) : NULL;
+        while (result == 0 && part) {
+            char *next = strtok_r(NULL, "/", &save);
+            if (!next) {
+                int out = openat(fd, part, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
+                if (out < 0) result = -1;
+                size_t off = 0;
+                while (out >= 0 && off < len) {
+                    ssize_t n = write(out, data + off, len - off);
+                    if (n < 0 && errno == EINTR) continue;
+                    if (n <= 0) { result = -1; break; }
+                    off += (size_t)n;
+                }
+                if (out >= 0 && close(out) != 0) result = -1;
+            } else {
+                if (mkdirat(fd, part, 0755) != 0 && errno != EEXIST) { result = -1; break; }
+                int child = openat(fd, part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+                if (child < 0) { result = -1; break; }
+                close(fd);
+                fd = child;
+            }
+            part = next;
+        }
+        if (result) tb_err("cannot add packaging file %s as %s: %s", file->source, file->path, strerror(errno));
+        if (fd >= 0) close(fd);
+        free(path); free(data);
+        if (result) return -1;
+    }
+    return 0;
+}
+
 static int check_prefix(const char *p) {
     if (!p || p[0] != '/' || !tam_path_is_safe_rel(p + 1)) {
         tb_err("the prefix must be an absolute path without . or .. components: %s", p ? p : "(none)");
@@ -495,6 +592,7 @@ int tb_build(const tb_build_opts_t *o) {
     char *partial = NULL, *parent = NULL;
     const char *leaf = NULL;
     if (tb_recipes_read(o->recipes, &b.r) != 0 || tb_lock_read(o->lock, &b.lock) != 0) goto out;
+    if (packaging_prepare(&b) != 0) goto out;
 
     b.c = calloc(b.r.n, sizeof *b.c);
     if (!b.c) goto out;
@@ -534,6 +632,8 @@ int tb_build(const tb_build_opts_t *o) {
 
     size_t built = 0;
     long long newest = 0; /* the newest locked commit: the manual index's time */
+    if (b.r.index_man && b.packaging_commit &&
+        tb_git_commit_time(b.packaging, b.packaging_commit, &newest) != 0) goto out;
     for (size_t i = 0; i < b.n; i++) {
         comp_t *c = &b.c[i];
         const char *name = c->rc->name, *commit = c->lock->commit;
@@ -589,6 +689,7 @@ int tb_build(const tb_build_opts_t *o) {
         goto out;
     }
     if (merge(&b, partial) != 0) goto out;
+    if (packaging_files(&b, partial) != 0) goto out;
     /* After the cache keys, so a man-db update rebuilds no component. */
     if (b.r.index_man) {
         char *tool = tb_man_index_tool();
@@ -600,23 +701,28 @@ int tb_build(const tb_build_opts_t *o) {
         if (tb_man_index(partial, newest) != 0) goto out;
     }
 
-    const char **sources = calloc(b.n, sizeof *sources);
-    char **source_text = calloc(b.n, sizeof *source_text);
+    size_t nsources = b.n + (b.packaging_commit ? 1 : 0);
+    const char **sources = calloc(nsources, sizeof *sources);
+    char **source_text = calloc(nsources, sizeof *source_text);
     bool ok = sources && source_text;
     for (size_t i = 0; ok && i < b.n; i++) {
         ok = asprintf(&source_text[i], "%s %s", b.c[i].rc->name, b.c[i].lock->commit) >= 0;
         if (ok) sources[i] = source_text[i];
     }
+    if (ok && b.packaging_commit) {
+        ok = asprintf(&source_text[b.n], "packaging %s", b.packaging_commit) >= 0;
+        if (ok) sources[b.n] = source_text[b.n];
+    }
     tb_seal_t so = {
         .name = b.r.name, .version = o->version, .host = o->host ? o->host : b.r.host, .built = o->built,
-        .sources = sources, .nsources = b.n,
+        .sources = sources, .nsources = nsources,
         .tools = (const char *const *)b.tools, .ntools = b.ntools,
         .needs = (const char *const *)b.r.needs, .nneeds = b.r.nneeds,
         .after = (const char *const *)b.r.after, .nafter = b.r.nafter,
     };
     char id[256] = "";
     bool sealed = ok && tb_seal(partial, &so, id) == TB_OK;
-    for (size_t i = 0; source_text && i < b.n; i++) free(source_text[i]);
+    for (size_t i = 0; source_text && i < nsources; i++) free(source_text[i]);
     free(source_text);
     free(sources);
     if (!sealed) goto out;
@@ -638,6 +744,7 @@ out:
     free(b.c);
     for (size_t i = 0; i < b.ntools; i++) free(b.tools[i]);
     free(b.cache);
+    free(b.packaging); free(b.packaging_commit);
     free(partial);
     free(parent);
     tb_lock_free(&b.lock);

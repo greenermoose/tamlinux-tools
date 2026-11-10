@@ -52,6 +52,14 @@ id_of() { local d=$1 n v h
 mkdir -p "$REPOS/lib" "$REPOS/app" "$REPOS/bad"
 git -C "$REPOS/lib" init -q -b main
 printf 'PREFIX ?= /usr/local\nall:\n\t@true\ninstall:\n\tinstall -d $(DESTDIR)$(PREFIX)/share/lib\n\tinstall -m 644 greeting $(DESTDIR)$(PREFIX)/share/lib/greeting\n' > "$REPOS/lib/Makefile"
+cat >> "$REPOS/lib/Makefile" <<'EOF'
+display session:
+	@echo built-$@ > $@
+install-display:
+	install -m 644 display $(DESTDIR)$(PREFIX)/share/lib/display
+install-session:
+	install -m 644 session $(DESTDIR)$(PREFIX)/share/lib/session
+EOF
 echo "hello from lib v1" > "$REPOS/lib/greeting"
 LIB1=$(commit_all "$REPOS/lib" "lib v1" "2026-01-01T00:00:00Z")
 
@@ -170,6 +178,63 @@ expect 0 "switch to the rebuilt bundle" tb --quiet switch "$BASE/b4"
 expect 0 "and back to the first build" tb --quiet back
 [ "$("$SLOT/current/bin/app")" = "hello from lib v1 in $SLOT/current" ] && pass "rollback restores the first build" \
     || fail "after back: $("$SLOT/current/bin/app")"
+
+# ---- Explicit make targets and packaging files ------------------------------
+
+R=$(variant targets)
+printf 'make-targets all display session\ninstall-targets install install-display install-session\n' >> "$R/lib.recipe"
+printf 'make-vars EXTRA=yes\n' >> "$R/app.recipe"
+expect 0 "build with several build and install targets" tb build "$R" "$LOCK" -o "$BASE/targets" --version 2
+grep -rlq 'built-display' "$XDG_CACHE_HOME/tamlinux/tam-bundle/build/"*/out/share/lib/display \
+    && grep -rlq 'built-session' "$XDG_CACHE_HOME/tamlinux/tam-bundle/build/"*/out/share/lib/session \
+    && pass "both additional library targets were installed in the private prefix" || fail "missing additional library installs"
+for badtarget in '--eval=bad' 'PREFIX=/outside' 'all;false' '-f/etc/passwd'; do
+    R=$(variant targetbad)
+    printf 'make-targets %s\n' "$badtarget" >> "$R/app.recipe"
+    expect 1 "refuse make target $badtarget" tb build "$R" "$LOCK" -o "$BASE/targetbad" --version 2
+    sed -i 's/^make-targets /install-targets /' "$R/app.recipe"
+    expect 1 "refuse install target $badtarget" tb build "$R" "$LOCK" -o "$BASE/targetbad" --version 2
+done
+
+PKG=$BASE/packaging
+mkdir -p "$PKG/notes"
+cp -a "$RECIPES" "$PKG/recipes"
+cp "$LOCK" "$PKG/tamlinux.lock"
+printf 'Version notes from the pinned packaging commit.\n' > "$PKG/notes/version.txt"
+ln -s version.txt "$PKG/notes/link"
+printf 'file notes/version.txt share/tamlinux/version notes.txt\n' >> "$PKG/recipes/bundle"
+git -C "$PKG" init -q -b main
+PACK1=$(commit_all "$PKG" "packaging" "2026-04-02T00:00:00Z")
+pb() { tb build "$PKG/recipes" "$PKG/tamlinux.lock" -o "$1" --version 2 --repos "$REPOS"; }
+expect 0 "build packaging files from a recorded commit" pb "$BASE/files1"
+cmp -s "$PKG/notes/version.txt" "$BASE/files1/share/tamlinux/version notes.txt" \
+    && pass "file entries support spaces in the destination and create parents" || fail "notes differ"
+grep -q "^source packaging $PACK1$" "$BASE/files1/BUNDLE" \
+    && pass "BUNDLE records the packaging commit" || fail "packaging source missing"
+expect 0 "bundle containing packaging files verifies" tb verify "$BASE/files1"
+echo 'Uncommitted notes must not enter the bundle.' > "$PKG/notes/version.txt"
+expect 0 "extra files come from the commit even when the working copy changes" pb "$BASE/files2"
+[ "$(id_of "$BASE/files1")" = "$(id_of "$BASE/files2")" ] \
+    && pass "dirty notes cannot change the recorded bundle" || fail "dirty notes changed hash"
+printf '# dirty recipe\n' >> "$PKG/recipes/app.recipe"
+expect 1 "refuse recipes different from the packaging commit" pb "$BASE/files-dirty"
+PACK2=$(commit_all "$PKG" "updated notes" "2026-04-03T00:00:00Z")
+expect 0 "build committed updated notes" pb "$BASE/files3"
+[ "$(id_of "$BASE/files1")" != "$(id_of "$BASE/files3")" ] \
+    && grep -q "^source packaging $PACK2$" "$BASE/files3/BUNDLE" \
+    && pass "packaging changes give a new recorded bundle" || fail "packaging update not recorded"
+for pair in 'notes/missing share/missing' 'notes/link share/link' 'notes/version.txt bin/app' \
+            'notes/version.txt share/app/app-link/child' 'notes/version.txt BUNDLE' \
+            '../outside share/outside' '/etc/passwd share/outside' 'notes/version.txt ../outside'; do
+    printf 'format 1\nname demo\nfile %s\n' "$pair" > "$PKG/recipes/bundle"
+    commit_all "$PKG" "invalid file entry" "2026-04-04T00:00:00Z" >/dev/null
+    expect 1 "refuse file entry: $pair" pb "$BASE/files-invalid"
+    [ ! -e "$BASE/files-invalid" ] && [ ! -e "$BASE/files-invalid.partial" ] \
+        && pass "invalid file left no bundle" || fail "invalid file left output"
+done
+R=$(variant files-no-repo)
+printf 'file notes/version.txt share/notes\n' >> "$R/bundle"
+expect 1 "file entries require a packaging repository" tb build "$R" "$LOCK" -o "$BASE/files-no-repo" --version 2
 
 # ---- Manual index -------------------------------------------------------------
 
