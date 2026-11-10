@@ -241,6 +241,7 @@ source packaging <commit>
 source libtam <commit>
 source tam <commit>
 tool cc gcc 16.2.1
+buildenv sha256:<64 hex>   (exact versions of build-needs and the toolchain base)
 tool tam-bundle 0.6.0
 host alex-desktop <host-id>
 target arch x86_64 baseline x86-64-v2
@@ -278,6 +279,36 @@ stay inside the tree, as before.
 **The bundle hash** is SHA-256 over `BUNDLE` without `hash` and `built`,
 then `MANIFEST`, then `SETTINGS`. A capture's hash covers `CAPTURE` and
 `FILES`.
+
+## The build environment
+
+Three properties are kept apart. **Payload identity** is the bundle's hash.
+**Reproducible rebuild** means the same lock and the same recorded build
+environment give the same hash. **Offline install** needs only the bundle
+file. Shipping a bundle guarantees the first and the third, not the second.
+
+To make rebuilds honest without building a store:
+
+- **Fixed PATH.** Builds run with `PATH=/usr/bin` only; the caller's PATH
+  (development folders, Mise, Nix) is never passed in.
+- **Offline build.** Fetching sources is a separate step before the build.
+  The build runs in a new network namespace beside its user and mount
+  namespaces, needing no root, so a recipe that tries to download fails
+  loudly.
+- **Build-environment identity.** Each recipe lists what it builds with
+  (`build-needs`, checked by `build` the way `needs` is checked at
+  install; users never need it). The cache key and `BUNDLE`'s `buildenv`
+  line record the exact rootstock package versions of those packages and
+  of the toolchain base (gcc, binutils, glibc, linux-api-headers, make,
+  pkgconf). An unrelated rootstock update does not force a rebuild of
+  everything; a toolchain change does.
+- **Checked cache hits.** A cache entry's `done` stamp holds the key and
+  the output's manifest hash. A hit is checked against the manifest with
+  the stat-based quick check `check` uses, and fully rehashed under
+  `--verify`; a mismatch rebuilds that entry.
+- **Clean build root only if needed.** A clean Arch build root
+  (`mkarchroot`, `makechrootpkg`) costs time and energy on every build. It
+  is added only if second-workstation rebuilds of one lock do not match.
 
 ## The dependency list
 
@@ -924,7 +955,8 @@ static against musl, or static glibc with no NSS lookups.
 **Stays:**
 
 - lock file, recipes, `build`, build cache, fixed build paths in user and
-  mount namespaces, reproducibility test;
+  mount namespaces, reproducibility test (tightened in "The build
+  environment");
 - `seal`, `verify`, `check`, `where`, `keep`, `prune`, the stat-based edit
   check and `--save-edits`;
 - privilege through `pkexec` and the polkit action;
@@ -972,9 +1004,11 @@ static against musl, or static glibc with no NSS lookups.
 
 ## Proofs required
 
-1. **Build and identity:** the same lock builds the same product hash
-   twice; two captures of one version have different ids; the build-time
-   link check refuses an unlisted library.
+1. **Build and identity:** the same lock and recorded build environment
+   build the same product hash twice; two captures of one version have
+   different ids; the build-time link check refuses an unlisted library; a
+   recipe that tries the network during the build fails; a corrupted cache
+   entry is detected and rebuilt.
 2. **Capture and restore:** change real settings, capture, then restore on
    a fresh user without consulting the original home or any Git
    repository; the secret scan excludes planted test tokens, and a restore
