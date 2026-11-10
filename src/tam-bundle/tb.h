@@ -6,8 +6,9 @@
 
 #include <tam.h>
 #include <stdio.h>
+#include <sys/types.h>
 
-#define TB_VERSION "0.3.0"
+#define TB_VERSION "0.3.1"
 #define TB_FORMAT 1               /* newest record format this program reads */
 #define TB_DEFAULT_SLOT "/usr/lib/tamlinux"
 #define TB_SYSTEM_STATE "/var/lib/tam-bundle"
@@ -160,6 +161,12 @@ void tb_keep_free(tb_keep_t *k);
 
 /* Append one line to the log: `<UTC time> <text>`. */
 int  tb_log(const tb_slot_t *s, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+/* session.<uid> in the state directory: the results of session steps that
+ * a root run left for that user, who cannot write the log. Only root
+ * creates it (tb_session_prepare, owned by `uid`, 0644); the user appends
+ * to it with tb_log_session, which never creates it. */
+int  tb_session_prepare(const tb_slot_t *s, uid_t uid);
+int  tb_log_session(const tb_slot_t *s, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 /* The live bundle id in `out`; "-" when the slot has no current/. */
 int  tb_current_id(const tb_slot_t *s, char out[256]);
 

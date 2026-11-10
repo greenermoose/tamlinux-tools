@@ -4,7 +4,8 @@
   formats, `seal`, `verify`, `needs`, `switch`, `back`, `recover`,
   `status`, `check`, `where`, `keep`, `prune` and `after`, with the crash
   and older-bundle tests; 0.2.0 adds `build` and `lock`; 0.3.0 adds
-  privilege through `pkexec` and the polkit action. Still to come: the
+  privilege through `pkexec` and the polkit action, and 0.3.1 records the
+  user's session-step results. Still to come: the
   `man-index` step, the man page and `tam` pages, and the native adapter
   package.
 - **Component:** `tamlinux-tools`, its own version number, C on `libtam`,
@@ -127,6 +128,9 @@ exchanged back into `current/`.
 - `lock` — taken with `flock` for the length of any changing command.
 - `switch` — the intent file, present only while a switch is in progress.
 - `log` — one line per switch, rollback, prune and post-install step.
+- `session.<uid>` — results of the session steps a root run left for that
+  user, who cannot write `log`. Only the root run creates it, owned by that
+  user; the user only appends to it. `status` shows its last line.
 - `keep` — bundle ids that `prune` must not remove, each with a reason
   (current, previous, recovery anchor).
 - `stat/<bundle id>` — size, inode, modification time and change time
@@ -359,7 +363,10 @@ How it works:
   `PKEXEC_UID`, does not run them; it logs `after <step> deferred to uid
   <uid>`. When pkexec returns, the waiting user process reads the log
   lines added since it started, and runs the steps deferred to its own uid,
-  once each. System steps (`man-index`) run in the root run.
+  once each, recording each result in `session.<uid>`, which the root run
+  created for it. Run with `sudo`, the root run creates the same file for
+  `SUDO_UID`, so a later `tam-bundle after` by that user is recorded too.
+  System steps (`man-index`) run in the root run.
 - **Refusals.** pkexec's own exit codes mean the program never ran: `126`
   (authorization refused or dismissed) and `127` (it could not run, as on
   a text console with no polkit agent). Each is reported with what to do

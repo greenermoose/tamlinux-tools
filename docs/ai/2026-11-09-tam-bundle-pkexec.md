@@ -1,4 +1,4 @@
-# `tam-bundle` 0.3.0: privilege through `pkexec`
+# `tam-bundle` 0.3.0 and 0.3.1: privilege through `pkexec`
 
 - **Date:** 2026-11-09
 - **Stage:** Develop: the privilege part of `tam-bundle`, per the approved
@@ -66,3 +66,25 @@
   were then removed.
 - **Gap found:** the user's run of a deferred step leaves no log line,
   because the log belongs to root.
+
+## 0.3.1: recording the user's results
+
+Six ways to close the gap were weighed: accept it and rely on the journal;
+a results file per user in the state directory; a log in the user's own
+state directory; a second pkexec call to write the line; the root run
+dropping to the user to run the steps itself; and a pipe back, which
+pkexec rules out by closing every descriptor but the first three. Fred:
+
+> Go with option 2
+
+- **`session.<uid>`:** when a root run defers a session step (pkexec) or
+  leaves one for `tam-bundle after` (sudo, from `SUDO_UID`), it creates
+  this file in the state directory, owned by that user, `0644`. The
+  user's process appends its results there and never creates the file;
+  without one, it says the result was not recorded. A user writes to the
+  main log only where that log is theirs.
+- **`status`** prints the last line of each `session.<uid>`.
+- **Tests:** the user's result stays out of the root run's log, the file's
+  owner and mode, `status`, and a run whose file was removed. All suites
+  passed on tmpfs, Btrfs and ext4. The `sudo` path needs real root and is
+  not covered by the tests.

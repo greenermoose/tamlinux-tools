@@ -189,6 +189,28 @@ static void free_ids(char **ids, size_t n) {
     free(ids);
 }
 
+/* The last line of each session.<uid>: results of session steps that a
+ * root run left for that user. */
+static void print_sessions(const tb_slot_t *s) {
+    DIR *dir = opendir(s->state);
+    if (!dir) return;
+    struct dirent *de;
+    while ((de = readdir(dir)) != NULL) {
+        if (strncmp(de->d_name, "session.", 8) != 0) continue;
+        size_t len = 0;
+        char *text = tb_read_at(dirfd(dir), de->d_name, &len);
+        char *last = NULL;
+        if (text && len > 1) {
+            text[len - 1] = '\0';
+            last = strrchr(text, '\n');
+            last = last ? last + 1 : text;
+        }
+        printf("session:   uid %s: %s\n", de->d_name + 8, last ? last : "(no result yet)");
+        free(text);
+    }
+    closedir(dir);
+}
+
 static int cmd_status(tb_slot_t *s) {
     char cur[256];
     if (tb_current_id(s, cur) != 0) return TB_FAIL;
@@ -224,6 +246,7 @@ static int cmd_status(tb_slot_t *s) {
     }
     free(text);
     free(log);
+    print_sessions(s);
     return result;
 }
 

@@ -265,21 +265,28 @@ done
 
 # A stand-in for pkexec: it records its arguments, then runs the command as
 # this user from /, with a cleared environment and PKEXEC_UID set, as pkexec
-# runs it as root from /root. FAKE_EXIT fails the way pkexec does.
+# runs it as root from /root. FAKE_EXIT fails the way pkexec does;
+# FAKE_RM removes a file after the run.
 FAKE=$BASE/fake-pkexec
 cat > "$FAKE" <<'EOF_FAKE'
 #!/bin/sh
 printf '%s\n' "$@" > "$FAKE_ARGS"
 [ -n "${FAKE_EXIT:-}" ] && exit "$FAKE_EXIT"
 uid=$(id -u)
-cd / && exec env -i PATH=/usr/bin:/bin PKEXEC_UID="$uid" "$@"
+rm_after=${FAKE_RM:-}
+cd / && env -i PATH=/usr/bin:/bin PKEXEC_UID="$uid" "$@"
+code=$?
+[ -n "$rm_after" ] && rm -f "$rm_after"
+exit $code
 EOF_FAKE
 chmod 755 "$FAKE"
 ARGS=$BASE/pk-args
 pk() { FAKE_ARGS=$ARGS TAM_BUNDLE_PKEXEC=$FAKE "$BIN" --slot "$SLOT" --state "$STATE" "$@"; }
 me=$(id -u)
 deferred() { grep -c " after qml-cache-purge deferred to uid $me\$" "$1/log"; }
-user_ran() { grep -c " after qml-cache-purge skipped\$" "$1/log"; }
+# Results of handed-over steps go to session.<uid>; never into the log.
+user_ran() { grep -c " after qml-cache-purge skipped\$" "$1/session.$me" 2>/dev/null; }
+log_ran() { grep -c " after qml-cache-purge skipped\$" "$1/log"; }
 
 fresh_slot; rm -rf "$BASE/state-rel"
 (cd "$BASE" && FAKE_ARGS=$ARGS TAM_BUNDLE_PKEXEC=$FAKE "$BIN" --slot "$SLOT" --state state-rel switch A) \
@@ -297,6 +304,14 @@ head -1 "$ARGS" | grep -q '^/' && pass "pkexec runs this program by its absolute
     && [ "$(grep -c 'qml-cache-purge: skipped in the test build' "$BASE/out")" = 1 ] \
     && pass "the root run defers the session step and the user's run takes it, once" \
     || fail "session step hand-over: $(grep after "$BASE/state-rel/log" | tr '\n' '|')"
+[ "$(log_ran "$BASE/state-rel")" = 0 ] && pass "the user's result stays out of the root run's log" \
+    || fail "the user's result went into the log"
+[ "$(stat -c '%u %a' "$BASE/state-rel/session.$me")" = "$me 644" ] \
+    && pass "the root run gives the user their own results file, 0644" \
+    || fail "session file: $(stat -c '%u %a' "$BASE/state-rel/session.$me" 2>&1)"
+"$BIN" --slot "$SLOT" --state "$BASE/state-rel" status | grep -q "^session:   uid $me: .* after qml-cache-purge skipped\$" \
+    && pass "status shows the user's last result" \
+    || fail "status: $("$BIN" --slot "$SLOT" --state "$BASE/state-rel" status | tr '\n' '|')"
 
 fresh_slot
 expect 0 "switch through pkexec, again" pk switch "$BASE/A"
@@ -328,15 +343,22 @@ grep -q "not installed" "$BASE/out" && pass "the refusal names the missing pkexe
 
 # Run as root by pkexec without this program waiting (`pkexec tam-bundle`
 # typed by hand): the session step is deferred, and `after` runs it.
-before=$(user_ran "$STATE")
+before=$(log_ran "$STATE")
 expect 0 "switch with PKEXEC_UID set defers the session step" env PKEXEC_UID="$me" "$BIN" --slot "$SLOT" --state "$STATE" switch "$BASE/C"
 ! grep -q "skipped in the test build" "$BASE/out" && [ "$(deferred "$STATE")" = 4 ] \
     && pass "the deferred step is logged and not run" || fail "PKEXEC_UID run: $(cat "$BASE/out")"
 expect 0 "after runs the live bundle's steps as the user" tbv after
-[ "$(user_ran "$STATE")" = $((before + 1)) ] && pass "after ran the deferred step" || fail "after: $(user_ran "$STATE") runs"
+[ "$(log_ran "$STATE")" = $((before + 1)) ] && pass "after ran the deferred step, recorded in the user's own log" \
+    || fail "after: $(log_ran "$STATE") runs"
+
+# The user never creates the results file: without one, the result is not
+# recorded, and the user is told.
+FAKE_RM=$STATE/session.$me expect 0 "switch through pkexec with the results file removed" pk switch "$BASE/B"
+grep -q "could not record" "$BASE/out" && [ ! -e "$STATE/session.$me" ] \
+    && pass "with no results file the user is told, and none is created" || fail "no results file: $(cat "$BASE/out")"
 
 # The state is readable, so status, check and where need no privilege.
-modes=$(stat -c %a "$STATE" "$STATE/stat" "$STATE/log" "$STATE/stat/$C" | tr '\n' ' ')
+modes=$(stat -c %a "$STATE" "$STATE/stat" "$STATE/log" "$STATE/stat/$B" | tr '\n' ' ')
 [ "$modes" = "755 755 644 644 " ] && pass "state directories and files are readable by everyone" \
     || fail "state modes: $modes"
 

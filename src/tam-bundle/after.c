@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 /* A command from the live tree's bin/, else from PATH. Caller frees. */
@@ -43,6 +44,27 @@ static const char *pkexec_uid(void) {
 #else
     return geteuid() == 0 ? uid : NULL;
 #endif
+}
+
+/* The desktop user a root run leaves session steps for: PKEXEC_UID, or
+ * SUDO_UID when run with sudo. 0 when there is none. */
+static uid_t desktop_uid(void) {
+    const char *v = pkexec_uid();
+    if (!v && geteuid() == 0) v = getenv("SUDO_UID");
+    if (!v || !*v) return 0;
+    char *end;
+    unsigned long u = strtoul(v, &end, 10);
+    return *end == '\0' && u > 0 && u < (uid_t)-1 ? (uid_t)u : 0;
+}
+
+/* A user writes results to the log only where the log is theirs. */
+static bool log_is_mine(const tb_slot_t *s) {
+    if (geteuid() == 0) return true;
+    char *path = tb_state_path(s, "log");
+    struct stat st;
+    bool mine = path && (stat(path, &st) != 0 ? errno == ENOENT : st.st_uid == geteuid());
+    free(path);
+    return mine;
 }
 
 enum { STEP_RAN = 0, STEP_SKIPPED = 1, STEP_DEFERRED = 2, STEP_FAILED = -1 };
@@ -88,25 +110,33 @@ static int run_step(const tb_slot_t *s, const char *step) {
 #endif
 }
 
-static int run_list(const tb_slot_t *s, char *const *steps, size_t n) {
+/* `handed`: steps a root run handed to this user, whose results go to
+ * session.<uid>. */
+static int run_list(const tb_slot_t *s, char *const *steps, size_t n, bool handed) {
     int result = TB_OK;
+    bool to_session = handed || !log_is_mine(s);
+    uid_t uid = desktop_uid();
+    bool prepared = false;
     for (size_t i = 0; i < n; i++) {
         int r = run_step(s, steps[i]);
-        if (r == STEP_DEFERRED)
-            tb_log(s, "after %s deferred to uid %s", steps[i], pkexec_uid());
-        else
-            tb_log(s, "after %s %s", steps[i], r == STEP_RAN ? "ok" : r == STEP_SKIPPED ? "skipped" : "failed");
+        const char *word = r == STEP_RAN ? "ok" : r == STEP_SKIPPED ? "skipped" : "failed";
+        if (r == STEP_DEFERRED) tb_log(s, "after %s deferred to uid %u", steps[i], (unsigned)uid);
+        else if (to_session) tb_log_session(s, "after %s %s", steps[i], word);
+        else tb_log(s, "after %s %s", steps[i], word);
+        /* A step left for the desktop user: give them a file for the result. */
+        if (!prepared && uid && tb_step_is_session(steps[i]) && (r == STEP_DEFERRED || geteuid() == 0))
+            prepared = tb_session_prepare(s, uid) == 0;
         if (r == STEP_FAILED) result = TB_AFTER_FAILED;
     }
     return result;
 }
 
 int tb_run_after(const tb_slot_t *s, const tb_bundle_t *b) {
-    return run_list(s, b->after, b->nafter);
+    return run_list(s, b->after, b->nafter, false);
 }
 
 int tb_run_steps(const tb_slot_t *s, char *const *steps, size_t n) {
-    return run_list(s, steps, n);
+    return run_list(s, steps, n, true);
 }
 
 /* The distribution's ID from os-release, or "" when unknown. */

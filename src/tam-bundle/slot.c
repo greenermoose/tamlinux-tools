@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -289,29 +290,72 @@ void tb_keep_free(tb_keep_t *k) {
 
 /* ---- Log --------------------------------------------------------------- */
 
-int tb_log(const tb_slot_t *s, const char *fmt, ...) {
+/* One timestamped line, control characters made spaces. */
+static int format_line(char *line, size_t cap, const char *fmt, va_list ap) {
     char msg[1024];
-    va_list ap;
-    va_start(ap, fmt);
     vsnprintf(msg, sizeof msg, fmt, ap);
-    va_end(ap);
     for (char *p = msg; *p; p++)
         if ((unsigned char)*p < 0x20) *p = ' ';
-
     time_t now = time(NULL);
     struct tm tm;
     gmtime_r(&now, &tm);
-    char line[1100];
     int n = (int)strftime(line, 32, "%Y-%m-%dT%H:%M:%SZ ", &tm);
-    n += snprintf(line + n, sizeof line - (size_t)n, "%s\n", msg);
+    n += snprintf(line + n, cap - (size_t)n, "%s\n", msg);
+    return n < (int)cap ? n : (int)cap - 1;
+}
 
-    char *path = tb_state_path(s, "log");
-    int fd = path ? open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0644) : -1;
-    free(path);
+static int append_line(int fd, const char *line, int n) {
     if (fd < 0) return -1;
     bool ok = write(fd, line, (size_t)n) == n && fsync(fd) == 0;
     close(fd);
     return ok ? 0 : -1;
+}
+
+int tb_log(const tb_slot_t *s, const char *fmt, ...) {
+    char line[1100];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = format_line(line, sizeof line, fmt, ap);
+    va_end(ap);
+    char *path = tb_state_path(s, "log");
+    int fd = path ? open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0644) : -1;
+    free(path);
+    return append_line(fd, line, n);
+}
+
+static char *session_path(const tb_slot_t *s, uid_t uid) {
+    char leaf[40];
+    snprintf(leaf, sizeof leaf, "session.%u", (unsigned)uid);
+    return tb_state_path(s, leaf);
+}
+
+int tb_session_prepare(const tb_slot_t *s, uid_t uid) {
+    char *path = session_path(s, uid);
+    int fd = path ? open(path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0644) : -1;
+    struct stat st;
+    bool ok = fd >= 0 && fstat(fd, &st) == 0 && S_ISREG(st.st_mode) &&
+              (st.st_uid == uid || fchown(fd, uid, (gid_t)-1) == 0) && fchmod(fd, 0644) == 0;
+    if (!ok) tb_err("cannot prepare %s for the session steps' results: %s", path ? path : "session file",
+                    strerror(errno));
+    if (fd >= 0) close(fd);
+    free(path);
+    return ok ? 0 : -1;
+}
+
+int tb_log_session(const tb_slot_t *s, const char *fmt, ...) {
+    char line[1100];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = format_line(line, sizeof line, fmt, ap);
+    va_end(ap);
+    char *path = session_path(s, getuid());
+    /* Never created here: only the root run makes it, owned by this user. */
+    int fd = path ? open(path, O_WRONLY | O_APPEND | O_NOFOLLOW | O_CLOEXEC) : -1;
+    int r = append_line(fd, line, n);
+    if (r != 0) tb_note("could not record this step's result in %s: %s", path ? path : "the state directory",
+                        strerror(errno));
+    free(path);
+    return r;
 }
 
 int tb_current_id(const tb_slot_t *s, char out[256]) {
