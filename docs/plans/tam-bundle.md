@@ -69,7 +69,9 @@ chains, daemon or language.
    resolves it. A bundle is as portable as that check.
 7. **Settings are part of the bundle.** The settings that make up the
    Tamlinux experience are captured and restored with the product. Big
-   application state is left out. Secrets are never captured.
+   application state is left out. Known secret folders are always refused
+   and other files are scanned for secrets, a safeguard rather than a
+   guarantee, so captures are always private.
 8. **Hosts.** A bundle knows the host it was made on. On that host
    everything applies. On another host, host-specific settings are left out
    and the common ones apply, so the user's own settings follow them.
@@ -220,7 +222,7 @@ A workstation bundle adds a settings capture:
 
 ```text
 capture/CAPTURE   identity: user, host, host id, date, product it was taken with
-capture/FILES     one line per captured file: mark, mode, hash, state, base, path
+capture/FILES     one line per listed path: mark, presence, mode, hash, origin, base, path
 capture/files/... the files, relative to the home directory
 ```
 
@@ -338,14 +340,37 @@ list's scope:
 - **Out:** big application state: browser profiles, editor extensions,
   note vaults, `~/.local/share` application data and caches. A user may
   still add a single settings file from such a program.
-- **Never:** secrets. Some paths are refused outright by tam-bundle's code
-  (`.ssh/`, `.gnupg/`, `.local/share/keyrings/`, agent credential folders
-  such as `.gemini/`, `.codex/` and `.claude/` credentials,
-  `.config/gh/hosts.yml`). Every other captured file is scanned for secret
-  patterns (private key blocks, GitHub, OpenAI, Anthropic, Slack and AWS
-  token prefixes, `password=` and `token=` assignments); a match is left
-  out, and the capture names the file and the line number, never the
-  value.
+- **Never on purpose:** secrets. Known secret paths are always refused by
+  tam-bundle's code (`.ssh/`, `.gnupg/`, `.local/share/keyrings/`, agent
+  credential folders such as `.gemini/`, `.codex/` and `.claude/`
+  credentials, `.config/gh/hosts.yml`). Every other captured file is
+  scanned for known secret patterns (private key blocks, GitHub, OpenAI,
+  Anthropic, Slack and AWS token prefixes, `password=` and `token=`
+  assignments); a match is excluded, and the capture names the file and
+  the line number, never the value. The scan is a safeguard, not a
+  guarantee: a secret in an unusual form can pass it. Captures and
+  workstation bundles are therefore always private (see below).
+
+**Presence: present, absent, excluded.** Every listed path has one line in
+`FILES`, in one of three states:
+
+| Presence | Meaning | Restore does |
+| --- | --- | --- |
+| `present` | the file and its contents are in the capture | writes it |
+| `absent` | the path is listed but no file was there | removes the file: the only state that deletes anything |
+| `excluded` | a file existed but was left out (refused path, secret pattern, unreadable, changed during the read) | leaves whatever is there alone and names it |
+
+An `excluded` line records its reason, and for a secret pattern the line
+number, never the value. A capture with any `excluded` line is marked
+**incomplete**, and capture and restore both say which files and why.
+
+**Private stays private.** Captures live in
+`~/.local/state/tamlinux/captures/` (mode `0700`, files `0600`). A
+workstation bundle written with `capture -o` is `0600`, and the message
+says it holds personal settings. tam-bundle refuses to write a capture or
+a workstation bundle anywhere under `/var/lib/tamlinux`, which is readable
+by everyone and holds product bundles only. Workstation bundles are never
+release material.
 
 **Nothing from `/etc`.** Everything in `/etc` belongs to the machine and is
 managed another way, never by Tamlinux bundles. A capture takes no file or
@@ -383,8 +408,8 @@ The unit is a whole file. When a `common` file names the capturing host or
 one of its display outputs (`DP-1`, `HDMI-A-1`), capture warns that the
 file looks mixed, so the user can split it once and mark the parts.
 
-**Edits relative to the product.** `FILES` records, for each captured
-file, its state (`default` when it equals the cultivar default, `edited`
+**Edits relative to the product.** `FILES` records, for each present
+file, its origin (`default` when it equals the cultivar default, `edited`
 otherwise) and its base, the product bundle id whose default it was
 compared with. A capture never pretends an edited file came unchanged from
 a source commit, and the base keeps the comparison correct after a
@@ -664,9 +689,10 @@ With nothing pending, nothing is printed and nothing measurable is spent.
   `--settings-only` restores a capture onto the current software. When
   the capture was taken with another product version, tam-bundle warns
   before preparing.
-- A restore makes the listed settings paths match the capture: files the
-  capture lacks are removed from those paths (they are in the automatic
-  capture). Paths not on the list are never touched.
+- A restore makes the listed settings paths match the capture: `present`
+  files are written, `absent` ones removed (they are in the automatic
+  capture), and `excluded` ones left as they are and named. Paths not on
+  the list are never touched.
 - Product rollback to the previous version reads its unpacked tree and
   `.placed/`; anything older is unpacked from its bundle file first.
 
@@ -878,7 +904,8 @@ static against musl, or static glibc with no NSS lookups.
    link check refuses an unlisted library.
 2. **Capture and restore:** change real settings, capture, then restore on
    a fresh user without consulting the original home or any Git
-   repository; the secret scan leaves out planted test tokens.
+   repository; the secret scan excludes planted test tokens, and a restore
+   leaves those excluded files untouched while removing an `absent` one.
 3. **Second workstation:** install with only the rootstock, the tam nut
    and the bundle file. A missing dependency is named before
    anything changes; once supplied, the experience matches, host files
