@@ -212,7 +212,7 @@ A workstation bundle adds a settings capture:
 
 ```text
 capture/CAPTURE   identity: user, host, host id, date, product it was taken with
-capture/FILES     one line per captured file: mark, mode, hash, path
+capture/FILES     one line per captured file: mark, mode, hash, state, base, path
 capture/files/... the files, relative to the home directory
 ```
 
@@ -366,9 +366,46 @@ one of its display outputs (`DP-1`, `HDMI-A-1`), capture warns that the
 file looks mixed, so the user can split it once and mark the parts.
 
 **Edits relative to the product.** `FILES` records, for each captured
-file, whether it equals the cultivar default of that product version or
-was edited, so a capture never pretends an edited file came unchanged from
-a source commit.
+file, its state (`default` when it equals the cultivar default, `edited`
+otherwise) and its base, the product bundle id whose default it was
+compared with. A capture never pretends an edited file came unchanged from
+a source commit, and the base keeps the comparison correct after a
+rollback or when a capture taken under one version is applied to another.
+
+### Settings on an ordinary upgrade
+
+Two parts, layering first.
+
+**Layering.** Product defaults live in the product tree, under
+`/usr/lib/tamlinux/current/`, and switch with the version like the rest of
+the product. The user's files load them first and then override only what
+the user changed: Hyprland's `hyprland.lua` loads the Tamlinux defaults
+before the user's own files, `.bashrc` sources a Tamlinux file, and the
+desktop shell and `fred.*` plugins read their defaults from the product
+tree. The user's files hold only the user's changes, so an upgrade does not
+touch them and nothing needs merging. Every settings file that has an
+include or source mechanism uses it. Product defaults kept as copies in a
+home directory are moved into the product tree.
+
+**The three-way rule** covers listed files that cannot layer (for example
+`mimeapps.list` and git settings). For each, tam-bundle compares the user's
+file with the default of its base version and the default of the new
+version:
+
+| The user's file | The new default | Result |
+| --- | --- | --- |
+| missing | exists | the new default is installed |
+| unedited | changed | replaced with the new default |
+| edited | unchanged | kept, nothing said |
+| edited | changed | kept; the new default is put beside it as `<name>.tamlinux-new` and listed in the ready message |
+| unedited | dropped | removed |
+| edited | dropped | kept and listed |
+
+tam-bundle never merges file contents by itself.
+`tam-bundle settings diff <path>` shows the user's file, the old default
+and the new default, so the user can merge by hand. A `.tamlinux-new` file
+is not itself on the settings list and is removed once the user's file
+equals it or the user deletes it.
 
 ## Prepare and apply
 
@@ -580,6 +617,7 @@ enforced is still open.
 | `tam-bundle status` | Current, previous, pending, interrupted, space used | No |
 | `tam-bundle check [--full]`, `where <path>` | Edited, missing or extra files; owner of one file | No |
 | `tam-bundle keep`, `unkeep`, `prune [--yes]` | Protect, list and remove retained bundles | Yes |
+| `tam-bundle settings diff <path>` | Show a settings file beside its old and new defaults | No |
 | `tam-bundle after` | Rerun the user-session post-install steps | No |
 
 Privilege works as before: run as a user, the root parts re-run through
@@ -774,11 +812,6 @@ proofs pass.
   typed again; the check must say which of them matter, and it must also
   catch processes running old `/usr/bin/tam-*` files, not only programs in
   the old version's tree.
-- **Settings on an ordinary upgrade:** what happens to a settings file
-  when a new product version ships a new default for it. Proposed: a file
-  still equal to the old default takes the new one; an edited file is
-  kept and the new default is put beside it, using the "default or edited"
-  record in `FILES`.
 - **Hyprland updates and the exact pin:** after a rootstock update brings a
   new Hyprland, the installed bundle no longer meets its `exact` line. A
   defined step is needed, such as rebuilding only the plugins into a new
