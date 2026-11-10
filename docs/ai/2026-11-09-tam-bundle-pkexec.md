@@ -88,3 +88,11 @@ pkexec rules out by closing every descriptor but the first three. Fred:
   owner and mode, `status`, and a run whose file was removed. All suites
   passed on tmpfs, Btrfs and ext4. The `sudo` path needs real root and is
   not covered by the tests.
+- **With the real pkexec again**, after Fred's "Yes, run the real pkexec
+  test again": one switch into a probe slot under `/var/tmp`. The root run
+  logged the step deferred and created `session.<uid>` owned by the user
+  (`0644`, in root's state directory); the user's process recorded
+  `after user-units-reload ok` there, at the same second as the user
+  manager's reload in the journal, and `status` showed it. A later
+  `tam-bundle after` by the user ran the reload again and added its result
+  to the same file. The probe slot and its state were then removed.
