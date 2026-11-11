@@ -1,5 +1,7 @@
 # AI Collaboration & Provenance
 
+2026-11-11: Codex CLI `0.167.1` (`gpt-6.1-sol`) — daily plain text journal. [Record](docs/ai/2026-11-11-plain-text-journal.md).
+
 Fred directs this project. AI-assisted work records the tool and verified
 version, model, guiding prompts, authorship boundaries and verification.
 Session transcripts are retained privately by the author; public records carry

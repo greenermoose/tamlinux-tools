@@ -1,0 +1,39 @@
+.TH TAM-JOURNAL 1 "2026-11-11" "tam-journal 0.1.0"
+.SH NAME
+tam-journal \- edit a daily plain text journal or append a quick note
+.SH SYNOPSIS
+.B tam-journal
+.RB [ add ]
+.RB [ --date
+.IR YYYY-MM-DD ]
+.SH DESCRIPTION
+Opens a durable private draft in Micro. With no subcommand it edits the day's
+journal; add starts a blank note and appends it after saving and closing Micro.
+The default day is local today when capture starts. Dates are checked as
+Gregorian dates; quick-note timestamps record actual capture date/time and zone.
+An unchanged edit or whitespace-only note cancels without creating a day file.
+.PP
+The journal directory defaults to $HOME/Journal and can be overridden with
+TAM_JOURNAL_DIR, which must be absolute. Each day is YYYY-MM-DD.txt, UTF-8 text.
+New files have mode 0600, new directories 0700. Existing journal directories
+must be owned by the user and private. There is no database or background service.
+.SH DATA SAFETY
+Micro edits .drafts files; original daily text is replaced atomically only after
+the editor succeeds and the new text is valid. Per-day locks serialize commits
+and full-day edits. Outside modifications detected during a full-day edit cause
+refusal rather than overwrite. A failed or conflicting save retains its draft
+and prints the path. Open that file in Micro to recover its text. Files larger
+than 16 MiB, symlinks, nonregular files and invalid UTF-8 are refused.
+.PP
+Interactive editing has no timeout. A crash may leave a draft. A failure after
+replacement but before directory sync may have committed the text; inspect the
+day before retrying the retained draft to avoid duplicating the note.
+Direct edits in another program do not take tam-journal's advisory lock.
+.SH EXIT STATUS
+0: success or cancellation. 1: editor or data failure. 2: invalid usage.
+3: conflicting or unavailable daily lock.
+.SH FILES
+Journal data and retained drafts belong to the user and are independent of
+package upgrades or rollback. No automatic sync, publishing or backup is added.
+.SH SEE ALSO
+.BR micro (1)

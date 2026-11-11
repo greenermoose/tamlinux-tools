@@ -44,13 +44,13 @@ LIBTAM_DIR := $(if $(LIBTAM_PREFIX),$(LIBTAM_PREFIX)/lib,$(shell $(PKG_CONFIG) -
 CORE_ARCHIVE := $(wildcard $(LIBTAM_DIR)/libtam.a)
 PORTAL_ARCHIVE := $(wildcard $(LIBTAM_DIR)/libtam-portal.a)
 
-BIN = bin/tam-file-select bin/tam-bundle
+BIN = bin/tam-file-select bin/tam-bundle bin/tam-journal
 
 # libtam is linked statically, so the binary carries the libtam it was built
 # with. The stamp changes with that configuration and forces a rebuild.
 CONFIG := $(CC) $(CFLAGS) $(INCLUDES) $(LIBS) $(CORE_CFLAGS) $(CORE_LIBS)
 
-.PHONY: all clean test install install-file-select install-bundle uninstall libtam-check core-check FORCE
+.PHONY: all clean test install install-file-select install-bundle install-journal test-journal uninstall libtam-check core-check FORCE
 
 all: bin $(BIN)
 
@@ -74,6 +74,12 @@ bin/tam-bundle-test: $(BUNDLE_SRCS) $(BUNDLE_HDRS) bin/.config $(CORE_ARCHIVE) |
 bin/tam-bundle-busy-test: tests/tam-bundle/busy.c src/tam-bundle/busy.c src/tam-bundle/util.c $(BUNDLE_HDRS) bin/.config $(CORE_ARCHIVE) | bin core-check
 	$(CC) $(CFLAGS) -fsanitize=address,undefined $(CORE_CFLAGS) -Isrc/tam-bundle tests/tam-bundle/busy.c src/tam-bundle/busy.c src/tam-bundle/util.c $(CORE_LIBS) -o $@
 
+bin/tam-journal: src/tam-journal.c bin/.config $(CORE_ARCHIVE) | bin core-check
+	$(CC) $(CFLAGS) -std=c11 -g $(CORE_CFLAGS) $< $(CORE_LIBS) -o $@
+
+test-journal: bin/tam-journal
+	python3 -B tests/journal/test_journal.py
+
 core-check:
 ifneq ($(CORE_ERROR),)
 	@printf '%s\n' 'tamlinux-tools: cannot build tam-bundle: $(CORE_ERROR).' \
@@ -94,7 +100,7 @@ endif
 
 # tests/tam-bundle works in $$TAM_TEST_DIR (default $$TMPDIR, else /tmp); run
 # it on Btrfs and ext4 directories to cover both file systems.
-test: all bin/tam-bundle-test bin/tam-bundle-busy-test
+test: all bin/tam-bundle-test bin/tam-bundle-busy-test test-journal
 	@tests/run_tests.sh
 	@tests/tam-bundle/run.sh
 	@tests/tam-bundle/build.sh
@@ -121,7 +127,7 @@ clean:
 POLICY = share/polkit-1/actions/org.tamlinux.bundle.policy
 MANDIR ?= $(PREFIX)/share/man
 
-install: install-file-select install-bundle
+install: install-file-select install-bundle install-journal
 
 install-file-select: bin/tam-file-select
 	install -d $(DESTDIR)$(PREFIX)/bin
@@ -135,7 +141,12 @@ install-bundle: bin/tam-bundle
 	sed 's|@BINDIR@|$(PREFIX)/bin|g' data/org.tamlinux.bundle.policy.in > $(DESTDIR)$(PREFIX)/$(POLICY)
 	chmod 644 $(DESTDIR)$(PREFIX)/$(POLICY)
 
+install-journal: bin/tam-journal
+	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(MANDIR)/man1
+	install -m 755 bin/tam-journal $(DESTDIR)$(PREFIX)/bin/
+	install -m 644 man/tam-journal.1 $(DESTDIR)$(MANDIR)/man1/
+
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/bin/tam-file-select $(DESTDIR)$(PREFIX)/bin/tam-bundle
+	rm -f $(DESTDIR)$(PREFIX)/bin/tam-file-select $(DESTDIR)$(PREFIX)/bin/tam-bundle $(DESTDIR)$(PREFIX)/bin/tam-journal
 	rm -f $(DESTDIR)$(PREFIX)/$(POLICY)
-	rm -f $(DESTDIR)$(MANDIR)/man1/tam-bundle.1
+	rm -f $(DESTDIR)$(MANDIR)/man1/tam-bundle.1 $(DESTDIR)$(MANDIR)/man1/tam-journal.1

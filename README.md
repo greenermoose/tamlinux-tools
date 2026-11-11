@@ -39,6 +39,19 @@ first if they should become tools in this suite.
 Assemblies install `tam-file-select` on `PATH`. Product flows that call it
 include share (`tam-menu-share`) and theme branding image pick.
 
+## Daily text journal
+
+`tam-journal [add] [--date YYYY-MM-DD]` edits a day in Micro; `add` starts a
+blank note that is appended after saving and closing. Files are ordinary
+UTF-8 text under `~/Journal/YYYY-MM-DD.txt`, configurable with the absolute
+`TAM_JOURNAL_DIR`. Quick notes carry the actual capture timestamp and zone.
+Private drafts, per-day locks and atomic writes protect existing text; failures
+retain the draft and print its path. See `man tam-journal` and the
+[design](docs/plans/plain-text-journal.md). `make test-journal` runs its isolated
+behavior checks. The product supplies calendar/Quick Launch entry points;
+this command also works on a text console. Journal data is outside package
+rollback. This adds no daemon, sync service or database.
+
 ## Usage: `tam-file-select`
 
 ```text
@@ -133,3 +146,5 @@ repo does not claim measured cold-start times or verified musl builds.
 ## License
 
 GNU General Public License v3.0 (GPLv3). See [LICENSE](LICENSE).
+
+[Software defect tracker](bugs/README-bugs.md).
