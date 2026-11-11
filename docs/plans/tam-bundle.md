@@ -19,6 +19,16 @@
 
 ## Console activation integration
 
+The 0.11.0 source binds prepare to `--expect-bundle`'s full SHA-256 and
+allows runtime preflight of a verified portable archive. First-install
+settings preparation can read the retained target without a current link,
+using the exact prepared system transaction for the selected user. Retry
+also works after system apply begins before publishing that first link.
+The full preflight suite passed with 28 product, 24 settings and 12 runtime
+tests; the subsequent first-install change passed all 26 settings tests,
+including the existing fault enumeration and randomized kills. These
+checks use temporary roots and mandatory private PID/private-proc isolation.
+
 The 0.10.0 development tool adds `session-activate` and the lightweight
 `startup-ready` barrier. `tam-start` and the staged `tam-desktop`
 finish the prepared system/settings transaction before launch and

@@ -79,7 +79,10 @@ typedef struct {
     char *homepath, *productpath;
     char productid[256], host[TB_HASH_LEN+1];
     settings files;
+    bool first_install;
 } user_settings;
+
+static int first_product(user_settings *u,const char *root);
 
 static int ssync(int fd) {
     if(fsync(fd))return -1;
@@ -311,7 +314,7 @@ static int user_lock(user_settings *u) {
     char *path=tam_path_join(u->homepath,".local/state/tamlinux/lock");
     int fd=path?tam_fs_lock(path,5000):-1; free(path); return fd;
 }
-static int user_open(user_settings *u,const char *root) {
+static int user_open(user_settings *u,const char *root,bool allow_first) {
     memset(u,0,sizeof *u); u->home=u->state=u->product=-1;
     const char *home=getenv("HOME");
     if(!home || *home!='/' || (!strcmp(root,"/") && !geteuid())) {
@@ -331,12 +334,18 @@ static int user_open(user_settings *u,const char *root) {
     u->state=sdir(u->home,".local/state/tamlinux",true);
     if(u->state<0 || fstat(u->state,&st) || st.st_uid!=geteuid() || fchmod(u->state,0700))return -1;
     char *current=tam_path_join(root,"usr/lib/tamlinux/current");
-    u->productpath=current?realpath(current,NULL):NULL; free(current);
-    if(!u->productpath)return -1;
+    if(!current)return -1;
+    u->productpath=realpath(current,NULL);
+    if(!u->productpath) {
+        bool absent=lstat(current,&st)<0 && errno==ENOENT;
+        if(!allow_first || !absent || first_product(u,root)){free(current); return -1;}
+    }
+    free(current);
+    if(u->product>=0)close(u->product);
     u->product=open(u->productpath,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
     tb_bundle_t b={0}; tb_manifest_t m={0};
     if(u->product<0 || tb_tree_read(AT_FDCWD,u->productpath,&b,&m))return -1;
-    snprintf(u->productid,sizeof u->productid,"%s",b.id);
+    snprintf(u->productid,sizeof u->productid,"%s",u->first_install?"-":b.id);
     tb_bundle_free(&b); tb_manifest_free(&m);
     char *hostpath=tam_path_join(root,"var/lib/tamlinux/host-id");
     size_t n=0; char *host=hostpath?metadata(AT_FDCWD,hostpath,&n,128):NULL; free(hostpath);
@@ -427,7 +436,7 @@ done:
 }
 int tb_settings_capture(const char *root) {
     user_settings u;
-    int r=user_open(&u,root);
+    int r=user_open(&u,root,false);
     char id[256];
     if(!r)r=snapshot(&u,id);
     user_close(&u);
@@ -682,8 +691,20 @@ static int set_product(user_settings *u,const char *root,const char *id) {
     tb_bundle_free(&b); tb_manifest_free(&m);
     int fd=ok?open(path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC):-1;
     if(fd<0){free(path); return -1;}
-    close(u->product); free(u->productpath); u->product=fd; u->productpath=path;
+    if(u->product>=0)close(u->product);
+    free(u->productpath); u->product=fd; u->productpath=path;
     snprintf(u->productid,sizeof u->productid,"%s",id); return 0;
+}
+static int first_product(user_settings *u,const char *root) {
+    system_tx sys;
+    /* A first install has no current product to read. Only a fully prepared
+     * root-owned transaction for this user may select the retained source.
+     * A dangling current link or an incomplete staging record never qualifies. */
+    if(system_read(root,&sys) || strcmp(sys.from,"-") || sys.uid!=getuid() ||
+       (strcmp(sys.state,"ready") && strcmp(sys.state,"applying") && strcmp(sys.state,"activating")) ||
+       set_product(u,root,sys.to))return -1;
+    u->first_install=true;
+    return 0;
 }
 static int settings_plan(user_settings *u,const char *root,const char *capture,bool only) {
     settings_tx t; int have=tx_read(u->state,&t);
@@ -1222,7 +1243,9 @@ static int session_activate(user_settings *u,const char *root) {
 }
 int tb_settings_main(const char *root,const char *command,const char *arg) {
     user_settings u; int result=TB_FAIL;
-    if(user_open(&u,root)){user_close(&u); return TB_FAIL;}
+    bool initial=!strcmp(command,"prepare-settings") || !strcmp(command,"session-activate") ||
+        !strcmp(command,"session-ready");
+    if(user_open(&u,root,initial)){user_close(&u); return TB_FAIL;}
     char *lockpath=tam_path_join(u.homepath,".local/state/tamlinux/lock");
     int lock=lockpath?tam_fs_lock(lockpath,5000):-1; free(lockpath);
     if(lock<0){user_close(&u); return TB_FAIL;}
@@ -1419,7 +1442,7 @@ bool tb_settings_private_output(const char *root,const char *output) {
 int tb_settings_export(const char *root,const char *output,bool save_edits) {
     if(!tb_settings_private_output(root,output)){tb_err("workstation bundles cannot be written under public product state"); return TB_FAIL;}
     user_settings u; int result=TB_FAIL;
-    if(user_open(&u,root)){user_close(&u); return TB_FAIL;}
+    if(user_open(&u,root,false)){user_close(&u); return TB_FAIL;}
     int lock=user_lock(&u);
     if(lock<0){user_close(&u); return TB_FAIL;}
     char *temp=tam_path_join(u.homepath,".local/state/tamlinux/.export-XXXXXX");
@@ -1435,7 +1458,7 @@ done:
 }
 int tb_settings_import(const char *root,const char *archive) {
     user_settings u; int result=TB_FAIL;
-    if(user_open(&u,root)){user_close(&u); return TB_FAIL;}
+    if(user_open(&u,root,false)){user_close(&u); return TB_FAIL;}
     int lock=user_lock(&u);
     if(lock<0){user_close(&u); return TB_FAIL;}
     char *temp=tam_path_join(u.homepath,".local/state/tamlinux/.import-XXXXXX");
@@ -1484,7 +1507,7 @@ done:
 int tb_settings_diff(const char *root,const char *path) {
     if(!tam_path_is_safe_rel(path) || secret_path(path))return TB_USAGE;
     user_settings u; int result=TB_FAIL;
-    if(user_open(&u,root)){user_close(&u); return TB_FAIL;}
+    if(user_open(&u,root,false)){user_close(&u); return TB_FAIL;}
     settings_tx tx; system_tx sys;
     char from[256],to[256];
     if(!system_read(root,&sys) && !strcmp(sys.state,"ready")) {

@@ -212,3 +212,18 @@ hash leaves the transaction and live installation untouched, malformed
 hashes refuse, and archived runtime checks detect a missing dependency.
 These are temporary-root proofs. Delivery activation, Home Manager link
 migration, dormant-slot conversion and real-machine acceptance remain open.
+
+The first-install settings path now accepts a prepared retained product
+when no current product exists. It requires the selected user's exact
+system transaction, `from -`, and a ready/applying/activating state.
+Planning still reads no home bytes. Missing preparation, another user's
+transaction, incomplete staging and a dangling current link refuse.
+Capture and export continue to require a live current product.
+
+All 26 settings tests passed after this change. The new console fixture
+starts with no current link, edits settings after preparation, interrupts
+system apply before the link exists, then retries to agreeing system and
+user completion. The switch-time capture preserves the later edit and
+the new default appears beside it. Existing capture, import/export,
+apply fault enumeration and randomized kill tests remain green. This is
+temporary-root evidence; first-machine migration is still unaccepted.

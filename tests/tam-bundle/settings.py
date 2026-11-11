@@ -175,6 +175,59 @@ class UserSettings(unittest.TestCase):
         self.assertFalse(list((fresh/'var/lib/tamlinux').rglob('CAPTURE')))
         self.assertFalse(list((fresh/'usr/lib/tamlinux').rglob('CAPTURE')))
 
+    def fresh_root(self):
+        source=self.root
+        self.root=self.base/'fresh-root'
+        shutil.copytree(source/'usr/share/tamlinux/rootstock',self.root/'usr/share/tamlinux/rootstock')
+        shutil.copytree(source/'var/lib/pacman',self.root/'var/lib/pacman')
+        self.home=self.base/'fresh-home'; self.home.mkdir()
+
+    def test_first_install_prepares_without_current_then_completes_at_console(self):
+        self.fresh_root()
+        self.write('.bashrc','existing personal settings\n')
+        self.tb('install',self.b)
+        self.tb('prepare-settings')
+        plan=(self.state/'transaction').read_text()
+        self.assertIn('from -\n',plan)
+        self.assertIn('to '+self.id(self.b)+'\n',plan)
+        self.assertFalse((self.root/'usr/lib/tamlinux/current').exists())
+        self.assertFalse((self.state/'captures').exists())
+        self.tb('session-ready',code=4)
+        self.write('.bashrc','edited after prepare\n')
+        pkexec=self.base/'first-pkexec'
+        pkexec.write_text('#!/bin/sh\nexec "'+str(format2.BIN)+'" --root "'+str(self.root)+'" apply "$2"\n')
+        pkexec.chmod(0o755)
+        env={'TAM_BUNDLE_PKEXEC':str(pkexec)}
+        # Retry from the applying barrier while current still does not exist.
+        self.tb('session-activate',env=dict(env,TAM_BUNDLE_FAULT='v2-state-applying'),code=4)
+        self.assertFalse((self.root/'usr/lib/tamlinux/current').exists())
+        self.tb('session-ready',code=4)
+        self.tb('session-activate',env=env)
+        self.tb('session-ready')
+        self.assert_live(self.b)
+        self.assertEqual((self.home/'.bashrc').read_text(),'edited after prepare\n')
+        self.assertEqual((self.home/'.bashrc.tamlinux-new').read_text(),'new bash\n')
+        self.assertEqual((self.home/'.config/added').read_text(),'new added\n')
+        capture=next((self.state/'captures').iterdir())
+        self.assertEqual((capture/'files/.bashrc').read_text(),'edited after prepare\n')
+
+    def test_first_install_refuses_foreign_unfinished_and_dangling_sources(self):
+        self.fresh_root()
+        self.tb('install',self.b,env={'PKEXEC_UID':'1000'})
+        self.tb('prepare-settings',code=1)
+        self.assertFalse((self.state/'transaction').exists())
+        system=self.root/'var/lib/tamlinux/transaction'
+        text=system.read_text().replace('uid 1000\n','uid 0\n')
+        system.write_text(text.replace('state ready\n','state staging\n'))
+        self.tb('prepare-settings',code=1)
+        system.write_text(text)
+        current=self.root/'usr/lib/tamlinux/current'
+        current.symlink_to('version/missing')
+        self.tb('prepare-settings',code=1)
+        current.unlink()
+        self.tb('prepare-settings')
+        self.assertIn('from -\n',(self.state/'transaction').read_text())
+
     def test_foreign_edit_blocks_all_settings_recovery(self):
         self.write('.bashrc','captured'); capture,_=self.capture(); self.write('.bashrc','before')
         self.tb('restore-settings',capture.name)
