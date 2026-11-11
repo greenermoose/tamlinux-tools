@@ -159,3 +159,23 @@ The development artifact has no Test, Run or Release authorization.
 The developer reviewed the recipe proof in Micro and said “Approve recipes;
 continue tam nut”. The tam nut, delivery integration and second-workstation
 proofs remain.
+
+## Arch tam nut development
+
+The developer's recipe approval continued into an uninstalled Arch
+bootstrap package. It supplies the profile, fixed apply helper, polkit
+policy and rule, boot unit and native dependency hooks. The native
+post-transaction command reads Pacman's locked database without widening
+the prepare/apply path.
+
+The full suite passes with 27 product, 21 settings and 11 runtime tests.
+New cases verify invoking-user identity and changed system activation
+profiles during retry. System records gain an activation-plan hash while
+legacy records remain readable. Format-2 build publication coverage has
+eight events and twelve random kills, alongside the earlier seven-event
+format-1 coverage. Both suites retain mandatory private PID/private-proc
+isolation.
+
+The [development checkpoint](../plans/tam-bundle.md#arch-tam-nut-development-checkpoint)
+records the exact native archive hash, verifier results and remaining
+source and hardware gates. No native package was installed.

@@ -17,6 +17,49 @@
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
   switching](../../upstream/2026-11-09-file-bundles-and-atomic-switch.md).
 
+## Arch tam nut development checkpoint
+
+The Arch bootstrap package builds `tam-bundle` 0.9.0 statically from
+tools commit `c226c49` and libtam `88ce9ac`. It installs the
+`arch-systemd` rootstock profile, `tam-nut`, real `hi` and `start`
+scripts, the boot recovery unit and native package hooks. The native
+adapter and the Nix/Home Manager delivery pin remain in place.
+
+- The boot service runs `tam-bundle apply` before
+  `systemd-user-sessions.service`. Failure leaves console access available.
+  The `start` wrapper requires completed system/settings agreement.
+- The password-free polkit action selects
+  `/usr/lib/tam-nut/apply-prepared`. That helper accepts no arguments
+  and invokes only `/usr/bin/tam-bundle apply`. The rule requires an
+  active local session. General bundle changes keep the authenticated
+  action. Real console authorization still needs machine acceptance.
+- The pre-removal hook names native packages needed by the live bundle
+  and refuses their removal. The post-transaction hook checks retained
+  runtime contracts through read-only `native-status`, while Pacman
+  still holds its database lock. Preparation and application continue
+  to refuse a locked native database.
+- Privileged prepare now records the validated invoking `PKEXEC_UID`.
+  The system transaction gains `activation`, a SHA-256 of ordered
+  system step names, required flags, helper paths and the services helper.
+  Retry resets its completion count when that plan changes. The reader
+  accepts legacy records without this field and reruns their actions.
+  New records carry `activation -` before activation. System transaction
+  reads are bounded to 4 KiB.
+- `make test` passed with 27 product, 21 settings and 11 runtime tests,
+  build faults and ASan/UBSan under mandatory private PID/proc isolation.
+  The bootstrap has three script/policy fixture tests. `makepkg --check`
+  produced a native archive, whose root ownership and contents were
+  inspected. Both polkit XML files and the extracted boot unit passed
+  their native verifiers. The archive SHA-256 is
+  `2ec1d0cfac8436f680364a41c9646f9b173aa7cfa6d2323cee45c15bdef669bf`.
+
+This checkpoint covers source and an uninstalled development package.
+The dormant-slot conversion, console activation/re-execution and
+`tam-deploy` candidate integration remain development work. Live native
+package replacement, boot/login changes and every Test/Run/Release retain
+their exact approvals. Second-workstation, power-cut, console-repair and
+Nix/Home Manager rollback acceptance remain open.
+
 ## Format-2 workstation recipe checkpoint
 
 **Approved by the developer, 2026-11-10:** "Approve recipes; continue tam nut".
