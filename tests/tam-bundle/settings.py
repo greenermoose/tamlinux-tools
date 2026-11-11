@@ -184,6 +184,84 @@ class UserSettings(unittest.TestCase):
         self.assertEqual((self.home/'.bashrc').read_text(),'external edit')
         self.write('.bashrc','before'); self.tb('apply-settings'); self.tb('session-ready')
 
+    def test_ready_switch_keeps_the_complete_old_session_available(self):
+        self.write('.bashrc','old session')
+        capture,_=self.capture()
+        self.tb('restore-settings',capture.name)
+        self.tb('apply-settings')
+        self.tb('install',self.b)
+        self.tb('session-ready')
+        self.tb('prepare-settings')
+        previous=self.state/'last-transaction'
+        self.assertEqual(previous.stat().st_mode&0o777,0o600)
+        self.tb('session-ready')
+        original=previous.read_text()
+        previous.write_text(original.replace('to '+self.id(self.a),'to foreign'))
+        self.tb('session-ready',code=4)
+        previous.write_text(original)
+        self.tb('apply',code=99,env={'TAM_BUNDLE_FAULT':'v2-state-applying'})
+        self.tb('session-ready',code=4)
+        self.tb('apply')
+        self.tb('session-ready',code=4)
+        self.tb('apply-settings')
+        self.tb('session-ready')
+
+    def test_console_trigger_completes_system_and_user_or_recovers(self):
+        helper=self.root/'usr/share/tamlinux/rootstock/reload'
+        actions=self.base/'unit-actions'
+        helper.write_text('#!/bin/sh\necho "$1" >> "'+str(actions)+'"\n')
+        helper.chmod(0o755)
+        pkexec=self.base/'pkexec'
+        pkexec.write_text('#!/bin/sh\nexec "'+str(format2.BIN)+'" --root "'+str(self.root)+'" apply "$2"\n')
+        pkexec.chmod(0o755)
+        env={'TAM_BUNDLE_PKEXEC':str(pkexec)}
+        self.tb('session-activate','unexpected',code=2,env=env)
+        self.write('.bashrc','console edit')
+        self.tb('install',self.b)
+        self.tb('apply','0'*32,code=4)
+        self.assertEqual(self.tx()['state'],'ready')
+        self.tb('prepare-settings')
+        self.tb('session-activate',env=env)
+        self.tb('session-ready')
+        self.assertEqual(actions.read_text().splitlines(),['stop','apply'])
+        self.assertEqual((self.home/'.bashrc').read_text(),'console edit')
+        self.assert_live(self.b)
+        (self.home/'.bashrc.tamlinux-new').unlink()  # The user has resolved the offered default.
+        self.tb('install',self.a)
+        self.tb('prepare-settings')
+        pkexec.write_text('#!/bin/sh\nexit 126\n')
+        self.tb('session-activate',env=env)
+        self.assertEqual(self.tx()['state'],'ready')
+        self.assertEqual(actions.read_text().splitlines()[-2:],['stop','restart-old'])
+        self.tb('session-ready')
+        pkexec.write_text('#!/bin/sh\nexec "'+str(format2.BIN)+'" --root "'+str(self.root)+'" apply "$2"\n')
+        self.tb('session-activate',env=dict(env,TAM_BUNDLE_FAULT='v2-state-applying'),code=4)
+        self.tb('session-ready',code=4)
+        self.tb('session-activate',env=env)
+        self.tb('session-ready')
+        self.assert_live(self.a)
+
+    def test_console_trigger_decline_preserves_the_completed_old_installation(self):
+        capture,_=self.capture()
+        self.tb('restore-settings',capture.name)
+        self.tb('apply-settings')
+        self.tb('install',self.b)
+        self.tb('prepare-settings')
+        refused=self.base/'must-not-run'
+        pkexec=self.base/'pkexec'
+        pkexec.write_text('#!/bin/sh\ntouch "'+str(refused)+'"\nexit 1\n')
+        pkexec.chmod(0o755)
+        with format2.ProductTransactions.sleeper(self,argument=self.root/'usr/lib/tamlinux/current/share/value') as blocker:
+            run=subprocess.run([str(format2.BIN),'--root',str(self.root),'session-activate'],
+                               input='n\n',text=True,capture_output=True,timeout=15,
+                               env=dict(os.environ,HOME=str(self.home),TAM_BUNDLE_PKEXEC=str(pkexec)))
+            self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+            self.assertIsNone(blocker.poll())
+            self.assertIn('[y/N]',run.stdout)
+        self.assertFalse(refused.exists())
+        self.assertEqual(self.tx()['state'],'ready')
+        self.tb('session-ready')
+
     def test_settings_diff_and_consumed_new_default_cleanup(self):
         self.write('.config/edited','custom\n')
         self.tb('install',self.b); self.tb('prepare-settings')

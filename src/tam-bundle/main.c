@@ -22,6 +22,8 @@ static const char usage_text[] =
     "  restore-settings CAPTURE    plan a settings-only restoration\n"
     "  apply-settings              capture current settings and finish the user's switch\n"
     "  session-ready               require agreement of complete system/user transactions\n"
+    "  session-activate            finish the prepared system/settings switch at login\n"
+    "  startup-ready               check the lightweight system launch barrier\n"
     "  settings diff PATH          show the user's file, base and new default\n"
     "  seal <dir> --name N --version V [...]   record a built tree as a bundle\n"
     "  verify <dir>                 check a bundle, kept or live tree against its MANIFEST\n"
@@ -514,6 +516,16 @@ int main(int argc, char **argv) {
     if (!o.nargs) return usage("no command given");
     const char *cmd = o.args[0];
 
+    if(!strcmp(cmd,"startup-ready")) {
+        if(o.nargs!=1 || o.output)return usage("unexpected startup arguments");
+        char *path=o.root?tam_path_join(o.root,"var/lib/tamlinux/transaction"):NULL;
+        if(o.root && !path)return TB_FAIL;
+        int guarded=tam_bundle_guard(path);
+        free(path);
+        if(guarded)tb_err("Tamlinux is switching versions or needs recovery");
+        return guarded?TB_INTERRUPTED:TB_OK;
+    }
+
     if(!strcmp(cmd,"settings") && o.nargs==3 && !strcmp(o.args[1],"diff"))
         return tb_settings_diff(o.root?o.root:"/",o.args[2]);
 
@@ -523,10 +535,12 @@ int main(int argc, char **argv) {
     }
 
     if(!strcmp(cmd,"capture") || !strcmp(cmd,"prepare-settings") || !strcmp(cmd,"restore-settings") ||
-       !strcmp(cmd,"apply-settings") || !strcmp(cmd,"session-ready")) {
+       !strcmp(cmd,"apply-settings") || !strcmp(cmd,"session-ready") || !strcmp(cmd,"session-activate")) {
         if(!strcmp(cmd,"capture") && o.nargs==1 && o.output)
             return tb_settings_export(o.root?o.root:"/",o.output,o.sw.save_edits);
-        if(o.nargs>2 || o.output || o.sw.save_edits)return usage("unexpected settings arguments");
+        bool capture_arg=!strcmp(cmd,"prepare-settings") || !strcmp(cmd,"restore-settings");
+        if(o.nargs>2 || (o.nargs>1 && !capture_arg) || o.output || o.sw.save_edits)
+            return usage("unexpected settings arguments");
         return tb_settings_main(o.root?o.root:"/",cmd,o.nargs==2?o.args[1]:NULL);
     }
 

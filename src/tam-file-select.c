@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <tam.h>
 #include <tam_portal.h>
 
 #define EXIT_PICKED 0
@@ -25,6 +26,10 @@
 #define EXIT_CHOOSER_FAILED 2
 
 int main(int argc, char *argv[]) {
+    if (tam_bundle_guard(NULL)) {
+        fputs("Tamlinux is switching versions or needs recovery; use tam-bundle status from the console.\n", stderr);
+        return EXIT_CHOOSER_FAILED;
+    }
     tam_portal_file_options_t options;
     memset(&options, 0, sizeof(options));
     options.title = "Select file";

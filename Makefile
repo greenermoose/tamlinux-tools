@@ -3,7 +3,7 @@ CFLAGS ?= -O2 -Wall -Wextra -Wpedantic
 PREFIX ?= /usr/local
 
 # tam-file-select uses libtam's desktop portal, the separate static library
-# libtam-portal (libtam 0.4.0 or later), found with
+# libtam-portal (libtam 0.6.0 or later), found with
 # `pkg-config libtam-portal`, which adds libtam and D-Bus. Add
 # <prefix>/lib/pkgconfig to PKG_CONFIG_PATH for a prefix outside
 # pkg-config's default path, or set LIBTAM_PREFIX to name the install prefix
@@ -14,32 +14,35 @@ DBUS_LIBS   := $(shell $(PKG_CONFIG) --libs dbus-1 2>/dev/null)
 ifdef LIBTAM_PREFIX
 LIBTAM_CFLAGS := -I$(LIBTAM_PREFIX)/include $(DBUS_CFLAGS)
 LIBTAM_LIBS   := -L$(LIBTAM_PREFIX)/lib -ltam-portal -ltam $(DBUS_LIBS)
-LIBTAM_ERROR  := $(if $(wildcard $(LIBTAM_PREFIX)/include/tam_portal.h),,LIBTAM_PREFIX=$(LIBTAM_PREFIX) has no include/tam_portal.h (libtam 0.4.0 or later))
+LIBTAM_ERROR  := $(if $(and $(wildcard $(LIBTAM_PREFIX)/include/tam_portal.h),$(shell grep -s -l tam_bundle_guard $(LIBTAM_PREFIX)/include/tam.h)),,LIBTAM_PREFIX=$(LIBTAM_PREFIX) has no include/tam_portal.h (libtam 0.6.0 or later))
 else
-LIBTAM_FOUND  := $(shell $(PKG_CONFIG) --exists libtam-portal 2>/dev/null && echo yes)
+LIBTAM_FOUND  := $(shell $(PKG_CONFIG) --atleast-version=0.6.0 libtam-portal 2>/dev/null && echo yes)
 LIBTAM_CFLAGS := $(if $(LIBTAM_FOUND),$(shell $(PKG_CONFIG) --cflags libtam-portal))
 LIBTAM_LIBS   := $(if $(LIBTAM_FOUND),$(shell $(PKG_CONFIG) --libs libtam-portal))
-LIBTAM_ERROR  := $(if $(LIBTAM_FOUND),,$(PKG_CONFIG) cannot find libtam-portal (libtam 0.4.0 or later))
+LIBTAM_ERROR  := $(if $(LIBTAM_FOUND),,$(PKG_CONFIG) cannot find libtam-portal (libtam 0.6.0 or later))
 endif
 
 INCLUDES = $(LIBTAM_CFLAGS)
 LIBS = $(LIBTAM_LIBS)
 
-# tam-bundle needs only the libtam core, 0.5.0 or later (SHA-256, the tree
+# tam-bundle needs only the libtam core, 0.6.0 or later (SHA-256, the tree
 # walk, record files and tree operations).
 ifdef LIBTAM_PREFIX
 CORE_CFLAGS := -I$(LIBTAM_PREFIX)/include
 CORE_LIBS   := -L$(LIBTAM_PREFIX)/lib -ltam
-CORE_ERROR  := $(if $(shell grep -s -l tam_fs_exchange $(LIBTAM_PREFIX)/include/tam.h),,LIBTAM_PREFIX=$(LIBTAM_PREFIX) has no libtam 0.5.0 or later include/tam.h)
+CORE_ERROR  := $(if $(shell grep -s -l tam_bundle_guard $(LIBTAM_PREFIX)/include/tam.h),,LIBTAM_PREFIX=$(LIBTAM_PREFIX) has no libtam 0.6.0 or later include/tam.h)
 else
-CORE_FOUND  := $(shell $(PKG_CONFIG) --atleast-version=0.5.0 libtam 2>/dev/null && echo yes)
+CORE_FOUND  := $(shell $(PKG_CONFIG) --atleast-version=0.6.0 libtam 2>/dev/null && echo yes)
 CORE_CFLAGS := $(if $(CORE_FOUND),$(shell $(PKG_CONFIG) --cflags libtam))
 CORE_LIBS   := $(if $(CORE_FOUND),$(shell $(PKG_CONFIG) --libs libtam))
-CORE_ERROR  := $(if $(CORE_FOUND),,$(PKG_CONFIG) cannot find libtam 0.5.0 or later)
+CORE_ERROR  := $(if $(CORE_FOUND),,$(PKG_CONFIG) cannot find libtam 0.6.0 or later)
 endif
 
 BUNDLE_SRCS := $(wildcard src/tam-bundle/*.c)
 BUNDLE_HDRS := $(wildcard src/tam-bundle/*.h)
+LIBTAM_DIR := $(if $(LIBTAM_PREFIX),$(LIBTAM_PREFIX)/lib,$(shell $(PKG_CONFIG) --variable=libdir libtam 2>/dev/null))
+CORE_ARCHIVE := $(wildcard $(LIBTAM_DIR)/libtam.a)
+PORTAL_ARCHIVE := $(wildcard $(LIBTAM_DIR)/libtam-portal.a)
 
 BIN = bin/tam-file-select bin/tam-bundle
 
@@ -57,24 +60,24 @@ bin:
 bin/.config: FORCE | bin
 	@printf '%s\n' '$(CONFIG)' | cmp -s - $@ || printf '%s\n' '$(CONFIG)' > $@
 
-bin/tam-file-select: src/tam-file-select.c bin/.config | bin libtam-check
+bin/tam-file-select: src/tam-file-select.c bin/.config $(CORE_ARCHIVE) $(PORTAL_ARCHIVE) | bin libtam-check
 	$(CC) $(CFLAGS) $(INCLUDES) $< $(LIBS) -o $@
 
-bin/tam-bundle: $(BUNDLE_SRCS) $(BUNDLE_HDRS) bin/.config | bin core-check
+bin/tam-bundle: $(BUNDLE_SRCS) $(BUNDLE_HDRS) bin/.config $(CORE_ARCHIVE) | bin core-check
 	$(CC) $(CFLAGS) -static $(CORE_CFLAGS) $(BUNDLE_SRCS) $(CORE_LIBS) -o $@
 
 # The test build acts on fault points ($$TAM_BUNDLE_FAULT) and skips
 # post-install steps; it is never installed.
-bin/tam-bundle-test: $(BUNDLE_SRCS) $(BUNDLE_HDRS) bin/.config | bin core-check
+bin/tam-bundle-test: $(BUNDLE_SRCS) $(BUNDLE_HDRS) bin/.config $(CORE_ARCHIVE) | bin core-check
 	$(CC) $(CFLAGS) -DTAM_BUNDLE_TESTING -fsanitize=address,undefined $(CORE_CFLAGS) $(BUNDLE_SRCS) $(CORE_LIBS) -o $@
 
-bin/tam-bundle-busy-test: tests/tam-bundle/busy.c src/tam-bundle/busy.c src/tam-bundle/util.c $(BUNDLE_HDRS) bin/.config | bin core-check
+bin/tam-bundle-busy-test: tests/tam-bundle/busy.c src/tam-bundle/busy.c src/tam-bundle/util.c $(BUNDLE_HDRS) bin/.config $(CORE_ARCHIVE) | bin core-check
 	$(CC) $(CFLAGS) -fsanitize=address,undefined $(CORE_CFLAGS) -Isrc/tam-bundle tests/tam-bundle/busy.c src/tam-bundle/busy.c src/tam-bundle/util.c $(CORE_LIBS) -o $@
 
 core-check:
 ifneq ($(CORE_ERROR),)
 	@printf '%s\n' 'tamlinux-tools: cannot build tam-bundle: $(CORE_ERROR).' \
-		'  Install libtam 0.5.0 or later first:   make -C <libtam checkout> install PREFIX=<prefix>' \
+		'  Install libtam 0.6.0 or later first:   make -C <libtam checkout> install PREFIX=<prefix>' \
 		'  then let pkg-config see it:   export PKG_CONFIG_PATH=<prefix>/lib/pkgconfig' >&2
 	@exit 1
 endif
@@ -83,7 +86,7 @@ endif
 libtam-check:
 ifneq ($(LIBTAM_ERROR),)
 	@printf '%s\n' 'tamlinux-tools: cannot build: $(LIBTAM_ERROR).' \
-		'  Install libtam 0.4.0 or later first:   make -C <libtam checkout> install PREFIX=<prefix>' \
+		'  Install libtam 0.6.0 or later first:   make -C <libtam checkout> install PREFIX=<prefix>' \
 		'  then let pkg-config see it:   export PKG_CONFIG_PATH=<prefix>/lib/pkgconfig' \
 		'  or name the prefix:   make LIBTAM_PREFIX=<prefix>' >&2
 	@exit 1

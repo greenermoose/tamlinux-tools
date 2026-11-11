@@ -76,6 +76,27 @@ class Runtime(unittest.TestCase):
         result=self.tb('native-status',code=1)
         self.assertIn('unmet runtime need: file /usr/lib/native-dependency',result.stderr)
 
+    def test_startup_guard_through_the_native_entry_point(self):
+        self.install_a()
+        self.tb('startup-ready')
+        state=self.root/'var/lib/tamlinux'
+        subprocess.run(['/usr/bin/mount','--bind',str(state),'/var/lib/tamlinux'],check=True)
+        try:
+            selector=Path(__file__).resolve().parents[2]/'bin/tam-file-select'
+            run=subprocess.run([str(selector),'--bogus'],text=True,capture_output=True)
+            self.assertIn('unknown option',run.stderr)
+            self.tb('install',self.b)
+            self.tb('startup-ready')
+            self.tb('apply',code=99,env={'TAM_BUNDLE_FAULT':'v2-state-applying'})
+            self.tb('startup-ready',code=4)
+            run=subprocess.run([str(selector),'--bogus'],text=True,capture_output=True)
+            self.assertEqual(run.returncode,2)
+            self.assertIn('switching versions or needs recovery',run.stderr)
+            self.tb('apply')
+            self.tb('startup-ready')
+        finally:
+            subprocess.run(['/usr/bin/umount','/var/lib/tamlinux'],check=True)
+
     def test_targets_are_checked_before_needs(self):
         self.reseal(self.a,needs=['file /missing'],targets=['arch aarch64 baseline x86-64-v2'])
         r=self.tb('needs',self.a,code=1)

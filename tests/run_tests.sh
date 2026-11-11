@@ -17,7 +17,7 @@ if ldd "$BIN" | grep -q "libtam"; then
     echo "  [FAIL] $BIN loads a shared libtam; it must link libtam statically" >&2
     exit 1
 fi
-nm "$BIN" | grep -q " T tam_portal_file_choose$" || {
+nm "$BIN" | grep " T tam_portal_file_choose$" >/dev/null || {
     echo "  [FAIL] $BIN does not contain libtam-portal" >&2
     exit 1
 }

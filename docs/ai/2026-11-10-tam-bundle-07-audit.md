@@ -179,3 +179,20 @@ isolation.
 The [development checkpoint](../plans/tam-bundle.md#arch-tam-nut-development-checkpoint)
 records the exact native archive hash, verifier results and remaining
 source and hardware gates. No native package was installed.
+
+After review in Micro, the developer said “Approve tam nut development;
+continue integration”. Console activation, dormant-slot conversion and
+delivery integration continue under the existing migration gates.
+
+## Console activation integration
+
+The 0.10.0 development source completes the system/settings console
+protocol, retains completed user records for a declined switch, and binds
+the fixed privileged helper to the exact transaction id. Native libtam
+callers and staged service wrappers use the system startup barrier.
+
+The full suite passed with 27 product, 24 settings and 12 runtime tests.
+The tests include default decline, refused authorization, interrupted
+apply and a native entry invoked against privately mounted fixture state.
+The design's console section records the helper refinement and remaining
+dormant-slot and delivery integration. Nothing was installed.

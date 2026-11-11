@@ -596,9 +596,9 @@ static int stxline(void *arg,size_t line,int fmt,char **f,size_t n) {
     }
     return 1;
 }
-static int tx_read(int fd,settings_tx *t) {
+static int tx_read_record(int fd,const char *record,settings_tx *t) {
     memset(t,0,sizeof *t);
-    size_t n; char *text=metadata(fd,"transaction",&n,4096);
+    size_t n; char *text=metadata(fd,record,&n,4096);
     if(!text)return errno==ENOENT?0:-1;
     int r=tam_rec_parse(text,n,2,1,stxline,t,NULL); free(text);
     if(r || t->fields!=2047 || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
@@ -617,6 +617,9 @@ static int tx_read(int fd,settings_tx *t) {
     bool planning=!strcmp(t->state,"ready") || !strcmp(t->state,"staging");
     if(planning?strcmp(t->changes,"-"):!shash_valid(t->changes))return -1;
     return 1;
+}
+static int tx_read(int fd,settings_tx *t) {
+    return tx_read_record(fd,"transaction",t);
 }
 static int tx_write(int fd,settings_tx *t,const char *state) {
     snprintf(t->state,sizeof t->state,"%s",state);
@@ -651,13 +654,13 @@ static int systemline(void *arg,size_t line,int fmt,char **f,size_t n) {
     }
     return 1;
 }
-static int system_read(const char *root,system_tx *t) {
+static int system_read_record(const char *root,bool previous,system_tx *t) {
     memset(t,0,sizeof *t);
     char *dir=tam_path_join(root,"var/lib/tamlinux");
     int fd=dir?open(dir,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC):-1; free(dir);
     if(fd<0)return -1;
-    size_t n=0; char *text=metadata(fd,"transaction",&n,4096);
-    if(!text && errno==ENOENT)text=metadata(fd,"last-transaction",&n,4096);
+    size_t n=0; char *text=metadata(fd,previous?"last-transaction":"transaction",&n,4096);
+    if(!previous && !text && errno==ENOENT)text=metadata(fd,"last-transaction",&n,4096);
     int r=text?tam_rec_parse(text,n,2,1,systemline,t,NULL):-1;
     free(text); close(fd);
     if(r || (t->fields!=255 && t->fields!=511) || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
@@ -665,6 +668,9 @@ static int system_read(const char *root,system_tx *t) {
        (strcmp(t->state,"ready") && strcmp(t->state,"staging") && strcmp(t->state,"applying") &&
         strcmp(t->state,"activating") && strcmp(t->state,"complete")))return -1;
     return 0;
+}
+static int system_read(const char *root,system_tx *t) {
+    return system_read_record(root,false,t);
 }
 static int set_product(user_settings *u,const char *root,const char *id) {
     if(!tam_path_is_safe_rel(id) || strchr(id,'/'))return -1;
@@ -682,6 +688,7 @@ static int set_product(user_settings *u,const char *root,const char *id) {
 static int settings_plan(user_settings *u,const char *root,const char *capture,bool only) {
     settings_tx t; int have=tx_read(u->state,&t);
     if(have<0 || (have && strcmp(t.state,"ready") && strcmp(t.state,"complete")))return TB_INTERRUPTED;
+    bool retain=have && !strcmp(t.state,"complete");
     if(capture && (!tam_path_is_safe_rel(capture) || strchr(capture,'/') || strlen(capture)>=sizeof t.capture))return TB_USAGE;
     memset(&t,0,sizeof t); strcpy(t.capture,capture?capture:"-"); strcpy(t.automatic,"-"); strcpy(t.activation,"-");
     strcpy(t.changes,"-");
@@ -708,6 +715,13 @@ static int settings_plan(user_settings *u,const char *root,const char *capture,b
         if(!r && strcmp(h.product,t.to))tb_note("settings and software differ: capture %s, target %s",h.product,t.to);
         capture_free(&h); sfree(&s);
         if(r)return TB_FAIL;
+    }
+    if(retain) {
+        size_t n=0;
+        char *previous=metadata(u->state,"transaction",&n,4096);
+        int saved=previous?swrite(u->state,"last-transaction",previous,n,0600):-1;
+        free(previous);
+        if(saved)return TB_FAIL;
     }
     if(tx_write(u->state,&t,"ready"))return TB_FAIL;
     tb_note("settings plan ready: %s; home files will be read at the switch",t.id);
@@ -974,6 +988,29 @@ static int userstepline(void *arg,size_t line,int fmt,char **f,size_t n) {
     s->names[k]=strdup(f[1]); s->commands[k]=strdup(f[3]); s->required[k]=!strcmp(f[2],"required");
     return !s->names[k] || !s->commands[k];
 }
+static int user_profile(const char *root,user_steps *steps) {
+    size_t n=0;
+    char *profile=tam_path_join(root,"usr/share/tamlinux/rootstock/profile");
+    struct stat st;
+    int fd=profile?open(profile,O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC):-1;
+    bool trusted=fd>=0 && !fstat(fd,&st) && S_ISREG(st.st_mode) && !(st.st_mode&0022) &&
+        (st.st_uid==0 || (strcmp(root,"/") && st.st_uid==geteuid()));
+    char *text=trusted?metadata_fd(fd,&n,METADATA_LIMIT):NULL; free(profile);
+    if(fd>=0)close(fd);
+    int parsed=text?tam_rec_parse(text,n,4,1,userstepline,steps,NULL):-1;
+    free(text);
+    bool reload=false;
+    for(size_t i=0;i<steps->n;i++)if(!strcmp(steps->names[i],"user-units-reload") && steps->required[i])reload=true;
+    if(parsed || !reload) {
+        tb_err("a trusted required user-units-reload step is needed before settings complete");
+        return -1;
+    }
+    return 0;
+}
+static void user_steps_free(user_steps *steps) {
+    for(size_t i=0;i<steps->n;i++){free(steps->names[i]); free(steps->commands[i]);}
+    free(steps->names); free(steps->commands); free(steps->required);
+}
 static int user_activate(user_settings *u,const char *root,settings_tx *t,const settings_changes *changes) {
     /* Activating can be retried after an external writer ran: never turn a
      * no-longer-complete file set into a successful transaction. */
@@ -982,22 +1019,9 @@ static int user_activate(user_settings *u,const char *root,settings_tx *t,const 
         if(live_hash(u->home,ch->path,hash,&mode) || strcmp(hash,ch->after) ||
            (!ch->remove && mode!=ch->mode))return TB_INTERRUPTED;
     }
-    user_steps steps={0}; size_t n=0;
-    char *profile=tam_path_join(root,"usr/share/tamlinux/rootstock/profile");
-    struct stat st;
-    int fd=profile?open(profile,O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC):-1;
+    user_steps steps={0};
     int result=TB_AFTER_FAILED;
-    bool trusted=fd>=0 && !fstat(fd,&st) && S_ISREG(st.st_mode) && !(st.st_mode&0022) &&
-        (st.st_uid==0 || (strcmp(root,"/") && st.st_uid==geteuid()));
-    char *text=trusted?metadata_fd(fd,&n,METADATA_LIMIT):NULL; free(profile);
-    if(fd>=0)close(fd);
-    int parsed=text?tam_rec_parse(text,n,4,1,userstepline,&steps,NULL):-1;
-    free(text);
-    bool reload=false;
-    for(size_t i=0;i<steps.n;i++)if(!strcmp(steps.names[i],"user-units-reload") && steps.required[i])reload=true;
-    if(parsed || !reload) {
-        tb_err("a trusted required user-units-reload step is needed before settings complete"); goto done;
-    }
+    if(user_profile(root,&steps))goto done;
     tam_str_t plan=tam_str_new("format 1\n");
     for(size_t i=0;i<steps.n && plan;i++) {
         const char *f[]={steps.names[i],steps.required[i]?"required":"optional",steps.commands[i]};
@@ -1023,8 +1047,7 @@ static int user_activate(user_settings *u,const char *root,settings_tx *t,const 
     }
     result=tx_write(u->state,t,"complete")?TB_INTERRUPTED:TB_OK;
 done:
-    for(size_t i=0;i<steps.n;i++){free(steps.names[i]); free(steps.commands[i]);}
-    free(steps.names); free(steps.commands); free(steps.required);
+    user_steps_free(&steps);
     return result;
 }
 static bool agrees(const user_settings *u,const system_tx *sys,const settings_tx *t) {
@@ -1032,6 +1055,24 @@ static bool agrees(const user_settings *u,const system_tx *sys,const settings_tx
         !strcmp(sys->to,t->to) && !strcmp(u->productid,t->to) && sys->uid==getuid() &&
         (!strcmp(t->kind,"settings-only")? !strcmp(t->from,t->to):
          (!strcmp(sys->id,t->id) && !strcmp(sys->from,t->from)));
+}
+static int session_ready(user_settings *u,const char *root) {
+    settings_tx t;
+    system_tx sys;
+    int have=tx_read(u->state,&t);
+    if(have<=0 || system_read(root,&sys))return TB_INTERRUPTED;
+    if(!strcmp(t.state,"complete") && agrees(u,&sys,&t))return TB_OK;
+    /* Ready/staging leaves the old product usable. Its completed system
+     * and user records must still agree before a launcher may continue. */
+    if((strcmp(sys.state,"ready") && strcmp(sys.state,"staging")) ||
+       strcmp(u->productid,sys.from) ||
+       (strcmp(t.state,"ready") && strcmp(t.state,"complete")))return TB_INTERRUPTED;
+    if(!strcmp(t.state,"ready")) {
+        if(strcmp(t.system,sys.id) || strcmp(t.from,sys.from) || strcmp(t.to,sys.to) ||
+           tx_read_record(u->state,"last-transaction",&t)!=1)return TB_INTERRUPTED;
+    }
+    if(system_read_record(root,true,&sys) || strcmp(t.state,"complete"))return TB_INTERRUPTED;
+    return agrees(u,&sys,&t)?TB_OK:TB_INTERRUPTED;
 }
 static int settings_apply(user_settings *u,const char *root) {
     settings_tx t;
@@ -1076,6 +1117,109 @@ static int settings_apply(user_settings *u,const char *root) {
 done:
     changes_free(&changes); return result;
 }
+static int session_units(const char *root,const char *operation,const char *id) {
+    user_steps steps={0};
+    int result=-1;
+    if(user_profile(root,&steps))goto done;
+    for(size_t i=0;i<steps.n;i++)if(!strcmp(steps.names[i],"user-units-reload")) {
+        char *helper=tam_path_join(root,steps.commands[i]);
+        const char *args[]={helper,operation,id,NULL};
+        tam_exec_result_t run=tam_exec(args,30000);
+        free(helper);
+        result=run.exit_code || run.timed_out || run.truncated?-1:0;
+        if(result)tb_err("user services action %s failed: %s",operation,run.stderr_buf?run.stderr_buf:"");
+        tam_exec_result_free(&run);
+        break;
+    }
+done:
+    user_steps_free(&steps);
+    return result;
+}
+static int session_activate(user_settings *u,const char *root) {
+    const char *pkexec="/usr/bin/pkexec";
+#ifdef TAM_BUNDLE_TESTING
+    const char *fake=getenv("TAM_BUNDLE_PKEXEC");
+    if(fake)pkexec=fake;
+#endif
+    if(strcmp(root,"/")
+#ifdef TAM_BUNDLE_TESTING
+       && !getenv("TAM_BUNDLE_PKEXEC")
+#endif
+    ) {
+        tb_err("session activation requires the running rootstock");
+        return TB_FAIL;
+    }
+    system_tx sys;
+    settings_tx user;
+    if(system_read(root,&sys) || sys.uid!=getuid() || tx_read(u->state,&user)!=1)return TB_INTERRUPTED;
+    if(!strcmp(sys.state,"staging")) {
+        tb_note("Tamlinux preparation is unfinished; continuing requires the completed old installation.");
+        return session_ready(u,root);
+    }
+    bool pending=strcmp(sys.state,"complete")!=0;
+    bool ready=!strcmp(sys.state,"ready");
+    if(pending && (strcmp(user.system,sys.id) || strcmp(user.from,sys.from) || strcmp(user.to,sys.to))) {
+        tb_err("the pending system and settings plans do not agree");
+        return TB_INTERRUPTED;
+    }
+    if(ready) {
+        if(session_units(root,"stop",sys.id)) {
+            session_units(root,"restart-old",sys.id);
+            return TB_AFTER_FAILED;
+        }
+        tb_bundle_t old={0};
+        tb_manifest_t manifest={0};
+        int busy=-1;
+        if(!strcmp(sys.from,"-"))busy=0;
+        else {
+            char rel[300]; snprintf(rel,sizeof rel,"usr/lib/tamlinux/version/%s",sys.from);
+            char *product=tam_path_join(root,rel);
+            if(product && !tb_tree_read(AT_FDCWD,product,&old,&manifest)) {
+                bool quiet=tb_quiet;
+                for(unsigned attempt=0;attempt<21;attempt++) {
+                    tb_quiet=attempt<20 || quiet;
+                    busy=tb_busy(root,sys.from,&manifest,false);
+                    if(busy<=0 || attempt==20)break;
+                    usleep(250000);
+                }
+                tb_quiet=quiet;
+            }
+            free(product);
+        }
+        if(busy>0) {
+            fputs("Stop the programs using old Tamlinux and continue? [y/N] ",stdout);
+            fflush(stdout);
+            char answer[16];
+            bool consent=fgets(answer,sizeof answer,stdin) &&
+                (!strcmp(answer,"y\n") || !strcmp(answer,"Y\n"));
+            if(consent)busy=tb_busy(root,sys.from,&manifest,true);
+        }
+        tb_bundle_free(&old); tb_manifest_free(&manifest);
+        if(busy) {
+            if(session_units(root,"restart-old",sys.id))return TB_AFTER_FAILED;
+            return busy<0?TB_FAIL:session_ready(u,root);
+        }
+    }
+    if(pending) {
+        char expected[65]; strcpy(expected,sys.id);
+        const char *args[]={pkexec,"/usr/lib/tam-nut/apply-prepared",expected,NULL};
+        tam_exec_result_t run=tam_exec(args,120000);
+        bool applied=!run.exit_code && !run.timed_out && !run.truncated;
+        if(!applied)tb_err("prepared system apply failed: %s",run.stderr_buf?run.stderr_buf:"");
+        tam_exec_result_free(&run);
+        if(system_read(root,&sys))return TB_INTERRUPTED;
+        if(strcmp(sys.id,expected))return TB_INTERRUPTED;
+        if(!strcmp(sys.state,"ready")) {
+            if(session_units(root,"restart-old",sys.id))return TB_AFTER_FAILED;
+            return session_ready(u,root);
+        }
+        if(!applied || strcmp(sys.state,"complete"))return TB_INTERRUPTED;
+    }
+    if(strcmp(u->productid,sys.to) && set_product(u,root,sys.to))return TB_INTERRUPTED;
+    int result=settings_apply(u,root);
+    if(!result && strcmp(u->productid,sys.to) && set_product(u,root,sys.to))return TB_INTERRUPTED;
+    return result?result:session_ready(u,root);
+}
 int tb_settings_main(const char *root,const char *command,const char *arg) {
     user_settings u; int result=TB_FAIL;
     if(user_open(&u,root)){user_close(&u); return TB_FAIL;}
@@ -1087,10 +1231,8 @@ int tb_settings_main(const char *root,const char *command,const char *arg) {
     } else if(!strcmp(command,"prepare-settings"))result=settings_plan(&u,root,arg,false);
     else if(!strcmp(command,"restore-settings"))result=arg?settings_plan(&u,root,arg,true):TB_USAGE;
     else if(!strcmp(command,"apply-settings"))result=settings_apply(&u,root);
-    else if(!strcmp(command,"session-ready")) {
-        settings_tx t; system_tx sys; int have=tx_read(u.state,&t);
-        result=have>0 && !strcmp(t.state,"complete") && !system_read(root,&sys) && agrees(&u,&sys,&t)?TB_OK:TB_INTERRUPTED;
-    }
+    else if(!strcmp(command,"session-activate"))result=session_activate(&u,root);
+    else if(!strcmp(command,"session-ready"))result=session_ready(&u,root);
     tam_fs_unlock(lock); user_close(&u); return result;
 }
 

@@ -923,7 +923,13 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
     free(incoming);
     free(dest);
         }
-    } else if(!strcmp(cmd,"apply") || !strcmp(cmd,"recover"))r=apply(&c,yes);
+    } else if(!strcmp(cmd,"apply") || !strcmp(cmd,"recover")) {
+        int have=arg?readtx(&c):0;
+        if(arg && (have!=1 || strcmp(c.tx.id,arg))) {
+            tb_err("prepared transaction changed; refusing to apply a different transaction");
+            r=TB_INTERRUPTED;
+        } else r=apply(&c,yes);
+    }
     else if(!strcmp(cmd,"cancel")){int have=readtx(&c);
     r=have<0?TB_INTERRUPTED:have?cancel(&c):TB_OK;
     }

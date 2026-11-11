@@ -17,7 +17,43 @@
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
   switching](../../upstream/2026-11-09-file-bundles-and-atomic-switch.md).
 
+## Console activation integration
+
+The 0.10.0 development tool adds `session-activate` and the lightweight
+`startup-ready` barrier. `tam-start` and the staged `tam-desktop`
+finish the prepared system/settings transaction before launch and
+re-execute the selected real command when its product identity changes.
+The native libtam callers and staged service entry wrappers check the
+system launch barrier.
+
+The user trigger stops the recorded active product units, waits for old
+file users and asks before stopping them. Decline and refused system
+apply restart the old units. A ready switch can continue the old
+installation only through retained, agreeing completed system and user
+records. Applying or activating failure retains the launch barrier.
+Required user activation reloads units and restores the recorded active
+set, with retry state written before stopping anything.
+
+The fixed apply helper now takes exactly one 32-digit hexadecimal
+transaction id. It invokes `tam-bundle apply <id>`, which verifies that
+id under the system lock. It accepts no command or root-path argument.
+This binds the console's checked settings plan to the privileged apply.
+
+The full suite passed with 27 product, 24 settings and 12 runtime tests,
+ASan/UBSan, build faults and mandatory private PID/private-proc isolation.
+A private mount namespace binds fixture state over the normal state path
+to exercise the real file-selector entry barrier. Native menu tests cover
+failed activation and re-execution after a switch. Libtam 0.6.0 and
+tam command 0.53.0 pass their source suites. Existing real-directory slots
+and root-private legacy state remain supported.
+
+The next source work is dormant-slot conversion and the recorded
+`tam-deploy` back end, including the Nix/Home Manager return path.
+The live native adapter and delivery pins remain installed.
+
 ## Arch tam nut development checkpoint
+
+**Approved by the developer, 2026-11-10:** "Approve tam nut development; continue integration".
 
 The Arch bootstrap package builds `tam-bundle` 0.9.0 statically from
 tools commit `c226c49` and libtam `88ce9ac`. It installs the

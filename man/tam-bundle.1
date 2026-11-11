@@ -182,8 +182,23 @@ at zero. User actions must be safe to repeat.
 Require complete, agreeing system and user transactions. A settings-only
 switch has its own id and also binds the exact completed system transaction.
 A stale record cannot authorize a later product round trip.
-This interface is the file-level barrier; actual login integration comes
-with the tam nut and tam-deploy migration.
+A ready or staging product switch may continue the old installation only
+when its retained completed system and user records still agree.
+.TP
+.B session-activate
+Run the console-side switch protocol. Stop the previous active product
+user units, wait for old-file users, and ask before stopping them.
+Declining or a refused system apply restores the old units and permits
+only a coherent completed old installation.
+The fixed privileged helper applies the exact expected transaction.
+The user settings and required activation then finish before launch.
+An applying or activating failure leaves the launch barrier in place.
+.TP
+.B startup-ready
+Read the lightweight system transaction barrier used by service entry
+wrappers. Refuse while system files are applying or activating, or when
+the record is malformed or unreadable.
+Session entry points use the complete system/settings protocol.
 .TP
 .BI settings " diff path"
 Show the user file, its base default and its new default. Refuse secret
@@ -209,6 +224,8 @@ Apply a ready transaction before starting the desktop, or resume an
 interrupted apply forward.
 The transaction remains recorded through required post-install steps.
 Apply renames files already written and synced by prepare.
+An optional transaction id binds apply to that prepared record, refusing
+a different record under the system lock.
 Recovery refuses a destination whose contents match neither the old nor
 the new manifest, leaving the transaction incomplete for console repair.
 Without
