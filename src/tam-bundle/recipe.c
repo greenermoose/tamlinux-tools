@@ -73,7 +73,7 @@ typedef struct {
 static int bundle_line(void *user, size_t line, int format, char **f, size_t n) {
     bparse_t *bp = user;
     tb_recipes_t *r = bp->r;
-    (void)format;
+    r->format=format;
     if (n != 2) return bad(bp->what, line, "expected: key value");
     if (strcmp(f[0], "name") == 0) {
         if (r->name) return bad(bp->what, line, "repeated name");
@@ -85,6 +85,12 @@ static int bundle_line(void *user, size_t line, int format, char **f, size_t n) 
         return (r->host = strdup(f[1])) ? 0 : 1;
     }
     if (strcmp(f[0], "needs") == 0) return push(&r->needs, &r->nneeds, f[1]) ? 0 : 1;
+    if(format==2 && !strcmp(f[0],"target"))return r->ntargets<16 && push(&r->targets,&r->ntargets,f[1])?0:1;
+    if(format==2 && !strcmp(f[0],"place")) {
+        if(strncmp(f[1],"usr/",4) || !tam_path_is_safe_rel(f[1]) || r->nplaced>=64)
+            return bad(bp->what,line,"place takes a conventional usr/ path");
+        return push(&r->placed,&r->nplaced,f[1])?0:1;
+    }
     if (strcmp(f[0], "file") == 0) {
         char *space = strchr(f[1], ' ');
         if (!space) return bad(bp->what, line, "expected: file <packaging path> <tree path>");
@@ -93,6 +99,8 @@ static int bundle_line(void *user, size_t line, int format, char **f, size_t n) 
         if (!tam_path_is_safe_rel(f[1]) || !tam_path_is_safe_rel(space) ||
             strcmp(space, "BUNDLE") == 0 || strcmp(space, "MANIFEST") == 0)
             return bad(bp->what, line, "file needs safe relative paths, not BUNDLE or MANIFEST");
+        if(format==2 && strcmp(space,"SETTINGS") && strncmp(space,"tree/",5) && strncmp(space,"placed/usr/",11))
+            return bad(bp->what,line,"format 2 file destinations are SETTINGS, tree/ or placed/usr/");
         tb_recipe_file_t *grown = realloc(r->files, (r->nfiles + 1) * sizeof *grown);
         if (!grown) return 1;
         r->files = grown;
@@ -202,6 +210,7 @@ static void recipe_free(tb_recipe_t *rc) {
 void tb_recipes_free(tb_recipes_t *r) {
     free(r->name);
     free(r->host);
+    free(r->text); free_list(r->targets,r->ntargets); free_list(r->placed,r->nplaced);
     free_list(r->needs, r->nneeds);
     free_list(r->after, r->nafter);
     for (size_t i = 0; i < r->nfiles; i++) {
@@ -272,7 +281,7 @@ int tb_recipes_read(const char *dir, tb_recipes_t *r) {
     char what[4200];
 
     snprintf(what, sizeof what, "%s/bundle", dir);
-    char *text = tb_read_at(dfd, "bundle", &len);
+    char *text = tb_read_limit(dfd, "bundle", &len,1024U*1024U);
     if (!text) {
         tb_err("cannot read %s: %s", what, strerror(errno));
         close(dfd);
@@ -280,7 +289,7 @@ int tb_recipes_read(const char *dir, tb_recipes_t *r) {
     }
     bparse_t bp = {r, what};
     int pr = tam_rec_parse(text, len, 2, TB_FORMAT, bundle_line, &bp, &err);
-    free(text);
+    r->text=text; r->len=len;
     if (pr != 0 || !r->name) {
         if (pr == 0) tb_err("%s: name is required", what);
         else parse_failed(what, pr, &err);
@@ -314,7 +323,7 @@ int tb_recipes_read(const char *dir, tb_recipes_t *r) {
             result = -1;
             break;
         }
-        rc->text = tb_read_at(dfd, files[i], &rc->len);
+        rc->text = tb_read_limit(dfd, files[i], &rc->len,1024U*1024U);
         if (!rc->text) {
             tb_err("cannot read %s: %s", what, strerror(errno));
             recipe_free(rc);

@@ -230,7 +230,10 @@ int tb_archive_pack(const char *dir, const char *archive) {
         if(out<0){close(parent); free(temp); free(leaf); return -1;}
         snprintf(fdpath,sizeof fdpath,"/proc/%ld/fd/%d",(long)getpid(),out);
     }
-    const char *argv[]={"/usr/bin/tar","--format=pax","--pax-option=delete=atime,delete=ctime","-cf",private?fdpath:archive,"-C",dir,"BUNDLE","MANIFEST","SETTINGS","placed","tree",private?"capture":NULL,NULL};
+    const char *argv[]={"/usr/bin/tar","--format=pax","--sort=name","--hard-dereference",
+        "--mtime=@0","--numeric-owner","--owner=0","--group=0",
+        "--pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime",
+        "-cf",private?fdpath:archive,"-C",dir,"BUNDLE","MANIFEST","SETTINGS","placed","tree",private?"capture":NULL,NULL};
     tam_exec_result_t r=tam_exec(argv,120000);
     bool ok=r.exit_code==0;
      if(!ok)tb_err("cannot write bundle archive: %s",r.stderr_buf?r.stderr_buf:"");

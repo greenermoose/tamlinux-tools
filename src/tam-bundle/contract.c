@@ -179,15 +179,20 @@ static bool qml_probe(int root,const char *name,const char *want) {
     char *text=read_small(fd,1024U*1024U); if(fd>=0)close(fd);
     if(text) {
         bool identity=false;
+        char typeinfo[4096]="plugins.qmltypes";
         for(char *save=NULL,*line=strtok_r(text,"\n",&save);line;line=strtok_r(NULL,"\n",&save)) {
             char type[128],ver[80],file[4096];
             if(sscanf(line,"%127s %79s",type,ver)==2 && !strcmp(type,"module") && !strcmp(ver,name))identity=true;
+            if(sscanf(line,"%127s %4095s",type,file)==2 && !strcmp(type,"typeinfo")) {
+                if(!tam_path_is_safe_rel(file)){identity=false; break;}
+                strcpy(typeinfo,file);
+            }
             if(sscanf(line,"%127s %79s %4095s",type,ver,file)==3 && module(type) && qml_version(ver,want))ok=true;
         }
         if(!identity){free(text); free(path); free(mod); return false;}
         if(!ok) {
             free(path); path=NULL;
-            if(asprintf(&path,"/usr/lib/qt6/qml/%s/plugins.qmltypes",mod)<0)path=NULL;
+            if(asprintf(&path,"/usr/lib/qt6/qml/%s/%s",mod,typeinfo)<0)path=NULL;
             fd=path?tb_runtime_open(root,path):-1;
             char *types=read_small(fd,16U*1024U*1024U); if(fd>=0)close(fd);
             if(types)ok=qml_exports(types,name,want);
@@ -222,7 +227,7 @@ int tb_contract_check(const char *rootpath,const char *product,const tb_bundle_t
                 free(r.copy); errors++; continue;
             }
             char *python=tam_path_join(native.root,"usr/bin/python3");
-            const char *args[]={python,"-I","-c","import importlib,sys; importlib.import_module(sys.argv[1])",need->target,NULL};
+            const char *args[]={python,"-I","-B","-c","import importlib,sys; importlib.import_module(sys.argv[1])",need->target,NULL};
             tam_exec_result_t run=tam_exec(args,10000);
             ok=!run.exit_code && !run.timed_out && !run.truncated;
             tam_exec_result_free(&run); free(python);

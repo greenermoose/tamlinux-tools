@@ -64,13 +64,13 @@ static int lock_parse(const char *text, size_t len, const char *what, tb_lock_t 
 int tb_lock_read(const char *path, tb_lock_t *l) {
     memset(l, 0, sizeof *l);
     size_t len;
-    char *text = tb_read_at(AT_FDCWD, path, &len);
+    char *text = tb_read_limit(AT_FDCWD, path, &len,1024U*1024U);
     if (!text) {
         tb_err("cannot read %s: %s", path, strerror(errno));
         return -1;
     }
     int r = lock_parse(text, len, path, l);
-    free(text);
+    if(r)free(text); else {l->text=text; l->len=len;}
     return r;
 }
 
@@ -81,6 +81,7 @@ void tb_lock_free(tb_lock_t *l) {
         free(l->v[i].commit);
     }
     free(l->v);
+    free(l->text);
     memset(l, 0, sizeof *l);
 }
 

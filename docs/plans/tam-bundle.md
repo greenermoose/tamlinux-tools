@@ -17,9 +17,50 @@
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
   switching](../../upstream/2026-11-09-file-bundles-and-atomic-switch.md).
 
+## Format-2 workstation recipe checkpoint
+
+**Approved by the developer, 2026-11-10:** "Approve recipes; continue tam nut".
+
+The [workstation recipe](https://github.com/greenermoose/tamlinux-packages/blob/66ff1c3f73050a2fe9c4ca108718ca137a2afc80/recipes/workstation/bundle)
+pins libtam, tam, tamlinux-tools and Tamlinux in its sibling lock. Libtam
+is a build input. The tools component contributes `tam-file-select`.
+The product stages with `PREFIX=/usr`. The builder moves the private
+product data from `usr/lib/tamlinux/current` into `tree/` and the
+declared conventional paths into `placed/usr/`. The installed Arch
+profile will independently check placement.
+
+- **Commands and vendor files.** Placed commands are real executables.
+  The bundle supplies `tam-start` and `tam-suspend-unless-stay-awake`.
+  The tam nut will supply `hi`, `start`, `tam-nut` and `tam-bundle`.
+  The staged vendor paths include systemd units, sysctl and tmpfiles
+  drop-ins, polkit actions, Pacman hooks, fonts and manual pages. Two
+  session service links become a systemd `Wants` drop-in.
+- **Inputs and settings.** The bundle carries the exact `bundle`,
+  component recipes, lock and `BUILDENV` under `tree/recipe/`.
+  `SETTINGS` lists public common and host path marks. The workstation
+  capture will supply personal settings values. The Arch runtime
+  declaration names native providers, the Quickshell Wayland module,
+  ELF probes and the required user-units reload. The builder checks
+  ELF and script interpreters before publication.
+- **Automated proof.** Packaging commit `66ff1c3` produced the same
+  3,175-entry identity from a fully checked cache and an empty cache.
+  At the same recorded build time, both portable archives are
+  byte-identical and verify. The archive SHA-256 is
+  `9451f021ccb45196b005bde2fff62452da84d7b1a63d3f1389599bcb20dc41a7`.
+  Format-2 fixture tests cover temporary-root prepare and apply,
+  undeclared placement refusal and eight build publication fault
+  events. All signal tests require private PID and proc namespaces.
+- **Next gate.** Build and verify the tam nut.
+  It needs the installed profile, boot service, package hooks and
+  narrow apply authorization. Home Manager link conversion, native
+  `asdcontrol` delivery and compatibility, console repair, physical
+  interruption and rollback remain open. The Nix/Home Manager path
+  remains available for delivery and recovery.
+
 ## 0.8 implementation checkpoint
 
-The build-tree tool reports 0.8.0; it is not installed. Native ownership,
+**Approved by the developer, 2026-11-10:** "Approve 0.8 tool; continue recipes".
+The accepted tool checkpoint reports 0.8.0; it is not installed. Native ownership,
 runtime contracts/probes, offline builds, recorded build environments,
 checked caches and the fully static production executable are implemented.
 The earlier 0.6 and 0.7 formats remain approved. This checkpoint does not

@@ -585,7 +585,7 @@ static int merge(build_t *b, const char *tree) {
  * supplies extra files too, so dirty or untracked files cannot enter a
  * bundle whose identity claims otherwise. Standalone scratch recipes are
  * still useful, but cannot use `file` without a packaging commit. */
-static int packaging_input(build_t *b, const char *path) {
+static int packaging_input(build_t *b, const char *path,const char *working,size_t working_len) {
     char *abs = realpath(path, NULL);
     size_t rootlen = strlen(b->packaging);
     if (!abs || strncmp(abs, b->packaging, rootlen) != 0 || abs[rootlen] != '/') {
@@ -593,11 +593,10 @@ static int packaging_input(build_t *b, const char *path) {
         free(abs);
         return -1;
     }
-    size_t committed_len = 0, working_len = 0;
+    size_t committed_len = 0;
     char *committed = tb_git_file(b->packaging, b->packaging_commit, abs + rootlen + 1, &committed_len);
-    char *working = tb_read_at(AT_FDCWD, abs, &working_len);
     bool same = committed && working && committed_len == working_len && memcmp(committed, working, working_len) == 0;
-    free(abs); free(committed); free(working);
+    free(abs); free(committed);
     if (!same) tb_err("%s must be committed at packaging %.12s before building", path, b->packaging_commit);
     return same ? 0 : -1;
 }
@@ -610,16 +609,16 @@ static int packaging_prepare(build_t *b) {
         return -1;
     }
     b->packaging_commit = tb_git_resolve(b->packaging, "HEAD");
-    if (!b->packaging_commit || packaging_input(b, b->o->lock) != 0) return -1;
+    if (!b->packaging_commit || packaging_input(b,b->o->lock,b->lock.text,b->lock.len))return -1;
     char *path = tam_path_join(b->o->recipes, "bundle");
-    int result = path ? packaging_input(b, path) : -1;
+    int result = path ? packaging_input(b,path,b->r.text,b->r.len) : -1;
     free(path);
     for (size_t i = 0; i < b->r.n && result == 0; i++) {
         char *leaf = NULL;
         if (asprintf(&leaf, "%s.recipe", b->r.v[i].name) < 0) return -1;
         path = tam_path_join(b->o->recipes, leaf);
         free(leaf);
-        result = path ? packaging_input(b, path) : -1;
+        result = path ? packaging_input(b,path,b->r.v[i].text,b->r.v[i].len) : -1;
         free(path);
         if (strcmp(b->r.v[i].name, "packaging") == 0) {
             tb_err("packaging is reserved for the packaging source commit");
@@ -671,6 +670,69 @@ static int packaging_files(build_t *b, const char *tree) {
     return 0;
 }
 
+/* Split the merged DESTDIR's /usr after all components have finished.
+ * The new names are entirely within the unpublished output directory. */
+static int split_product(build_t *b,const char *partial) {
+    int fd=open(partial,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    char *stage=tam_path_join(partial,".usr"); int result=-1;
+    if(fd<0 || !stage || mkdirat(fd,".usr",0755) || merge(b,stage) || mkdirat(fd,"placed",0755))goto done;
+    int src=tb_open_beneath(fd,".usr/lib/tamlinux");
+    if(src>=0) {
+        int priv=tb_open_beneath(src,"current"); struct stat st;
+        bool ok=priv>=0 && !fstat(priv,&st) && S_ISDIR(st.st_mode) &&
+            !fchmod(priv,0755) && !renameat(src,"current",fd,"tree");
+        if(priv>=0)close(priv);
+        close(src);
+        if(!ok || unlinkat(fd,".usr/lib/tamlinux",AT_REMOVEDIR))goto done;
+        if(unlinkat(fd,".usr/lib",AT_REMOVEDIR) && errno!=ENOTEMPTY)goto done;
+    } else if(errno!=ENOENT || mkdirat(fd,"tree",0755))goto done;
+    if(renameat(fd,".usr",fd,"placed/usr"))goto done;
+    tb_fault("build-format2-split"); result=0;
+done:
+    if(result)tb_err("cannot split the staged /usr into the private product tree and placed files");
+    if(fd>=0)close(fd);
+    free(stage); return result;
+}
+static int check_placed(const tam_walk_entry_t *e,void *arg) {
+    build_t *b=arg; mode_t mode=e->st->st_mode; bool dir=S_ISDIR(mode);
+    if(!tb_placement_allowed(e->path,dir,b->r.placed,b->r.nplaced) ||
+       !strcmp(e->path,"usr/bin/hi") || !strcmp(e->path,"usr/bin/start") ||
+       (!dir && !S_ISREG(mode)) ||
+       (!strncmp(e->path,"usr/bin/",8) && (dir || !(mode&0111)))) {
+        tb_err("recipe does not permit this placed file or mode: /%s",e->path); return -2;
+    }
+    return TAM_WALK_CONTINUE;
+}
+static int build_record(const char *dir,const char *name,const char *text,size_t len) {
+    char *path=tam_path_join(dir,name); struct stat st;
+    bool ok=path && lstat(path,&st) && errno==ENOENT && tam_fs_write_atomic(path,text,len,0644);
+    if(!ok)tb_err("cannot write the unique build record %s",name);
+    free(path); return ok?0:-1;
+}
+static int carry_recipe(build_t *b,const char *partial) {
+    int root=open(partial,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC),tree=-1,recipe=-1,result=-1;
+    if(root<0)goto done;
+    tree=b->r.format==2?tb_open_beneath(root,"tree"):dup(root);
+    if(tree<0 || (mkdirat(tree,"recipe",0755) && errno!=EEXIST))goto done;
+    recipe=tb_open_beneath(tree,"recipe"); struct stat st;
+    if(recipe<0 || fstat(recipe,&st) || !S_ISDIR(st.st_mode))goto done;
+    char dir[64]; snprintf(dir,sizeof dir,"/proc/self/fd/%d",recipe);
+    if(build_record(dir,"BUILDENV",b->environment,tam_str_len(b->environment)))goto done;
+    if(b->r.format==2) {
+        if(build_record(dir,"bundle",b->r.text,b->r.len) || build_record(dir,"tamlinux.lock",b->lock.text,b->lock.len))goto done;
+        for(size_t i=0;i<b->r.n;i++) {
+            char leaf[140]; snprintf(leaf,sizeof leaf,"%s.recipe",b->r.v[i].name);
+            if(build_record(dir,leaf,b->r.v[i].text,b->r.v[i].len))goto done;
+        }
+    }
+    tb_fault("build-environment-record"); result=0;
+done:
+    if(recipe>=0)close(recipe);
+    if(tree>=0)close(tree);
+    if(root>=0)close(root);
+    return result;
+}
+
 static int check_prefix(const char *p) {
     if (!p || p[0] != '/' || !tam_path_is_safe_rel(p + 1)) {
         tb_err("the prefix must be an absolute path without . or .. components: %s", p ? p : "(none)");
@@ -692,11 +754,17 @@ int tb_build(const tb_build_opts_t *o) {
     }
     umask(022);
 
+    tb_build_opts_t effective=*o;
+    o=&effective;
     build_t b = {.o = o};
     int result = TB_FAIL, lockfd = -1, pfd = -1;
     char *partial = NULL, *parent = NULL;
     const char *leaf = NULL;
     if (tb_recipes_read(o->recipes, &b.r) != 0 || tb_lock_read(o->lock, &b.lock) != 0) goto out;
+    if(b.r.format==2) {
+        effective.prefix="/usr";
+        if(!b.r.nplaced || !b.r.ntargets || b.r.index_man){tb_err("format 2 recipes need place and target records and use rootstock manual indexing"); goto out;}
+    }
     if (packaging_prepare(&b) != 0) goto out;
 
     b.c = calloc(b.r.n, sizeof *b.c);
@@ -797,14 +865,14 @@ int tb_build(const tb_build_opts_t *o) {
         tb_err("cannot make %s: %s", partial, strerror(errno));
         goto out;
     }
-    if (merge(&b, partial) != 0) goto out;
+    if ((b.r.format==2?split_product(&b,partial):merge(&b,partial))!=0)goto out;
     if (packaging_files(&b, partial) != 0) goto out;
-    char *recipe=tam_path_join(partial,"recipe"),*envfile=recipe?tam_path_join(recipe,"BUILDENV"):NULL;
-    bool env_ok=recipe && envfile && tam_fs_mkdir_p(recipe,0755) &&
-        tam_fs_write_atomic(envfile,b.environment,tam_str_len(b.environment),0644);
-    free(recipe); free(envfile);
-    if(!env_ok)goto out;
-    tb_fault("build-environment-record");
+    if(b.r.format==2) {
+        char *placed=tam_path_join(partial,"placed");
+        int r=placed?tam_fs_walk(placed,TAM_WALK_ONE_DEVICE,check_placed,&b):-1; free(placed);
+        if(r)goto out;
+    }
+    if(carry_recipe(&b,partial))goto out;
     /* After the cache keys, so a man-db update rebuilds no component. */
     if (b.r.index_man) {
         char *tool = tb_man_index_tool();
@@ -829,7 +897,8 @@ int tb_build(const tb_build_opts_t *o) {
         if (ok) sources[b.n] = source_text[b.n];
     }
     tb_seal_t so = {
-        .buildenv=b.buildenv,
+        .format=b.r.format,.buildenv=b.buildenv,
+        .targets=(const char *const *)b.r.targets,.ntargets=b.r.ntargets,
         .name = b.r.name, .version = o->version, .host = o->host ? o->host : b.r.host, .built = o->built,
         .sources = sources, .nsources = nsources,
         .tools = (const char *const *)b.tools, .ntools = b.ntools,
@@ -838,18 +907,17 @@ int tb_build(const tb_build_opts_t *o) {
     };
     char id[256] = "";
     tb_bundle_t check={0};
-    tb_manifest_t dummy={0};
     const char *temp_id="sha256:0000000000000000000000000000000000000000000000000000000000000000";
-    tam_str_t needs=tam_str_new("format 1\nname build\nversion 0\nhost any\n");
+    tam_str_t needs=tam_str_new(b.r.format==2?"format 2\nname build\nversion 0\nhost any\n":"format 1\nname build\nversion 0\nhost any\n");
     needs=tam_str_cat_printf(needs,"hash %s\n",temp_id);
     for(size_t i=0;i<b.r.nneeds;i++)needs=tam_str_cat_printf(needs,"needs %s\n",b.r.needs[i]);
     bool dependencies=needs && !tb_bundle_parse(needs,tam_str_len(needs),"build needs",&check) && !tb_link_check("/",partial,&check,true);
-    tam_str_free(needs); tb_bundle_free(&check); tb_manifest_free(&dummy);
+    tam_str_free(needs); tb_bundle_free(&check);
     bool sealed = ok && dependencies && tb_seal(partial, &so, id) == TB_OK;
     for (size_t i = 0; source_text && i < nsources; i++) free(source_text[i]);
     free(source_text);
     free(sources);
-    if (!sealed || environment_unchanged(&b)) goto out;
+    if (!sealed || environment_unchanged(&b) || tb_v2_verify(partial)) goto out;
     tb_fault("build-sealed");
     if (renameat2(AT_FDCWD, partial, AT_FDCWD, o->output, RENAME_NOREPLACE) != 0) {
         tb_err("cannot rename %s to %s: %s", partial, o->output, strerror(errno));

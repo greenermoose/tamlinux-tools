@@ -207,19 +207,23 @@ static int print_status(context *c,const char *cur) {
     }
     return 0;
 }
-static bool allowed(context *c,const char *p,bool dir) {
+bool tb_placement_allowed(const char *p,bool dir,char *const *roots,size_t count) {
     /* No profile can widen the product's fundamental placement boundary. */
     if(((strcmp(p,"usr") || !dir) && strncmp(p,"usr/",4)) || !strncmp(p,"usr/local",9) || !strncmp(p,"usr/lib/tamlinux",16))return false;
     if(!strncmp(p,"usr/bin/",8) && !dir) {
         const char *name=p+8;
-        if(strchr(name,'/') || (strcmp(name,"tam") && strncmp(name,"tam-",4)) || !strcmp(name,"tam-bundle") || !strcmp(name,"tam-nut"))return false;
+        if(strchr(name,'/') || (strcmp(name,"tam") && strcmp(name,"hi") && strcmp(name,"start") && strncmp(name,"tam-",4)) ||
+           !strcmp(name,"tam-bundle") || !strcmp(name,"tam-nut"))return false;
     }
-    for(size_t i=0;i<c->nallowed;i++) {
-        size_t n=strlen(c->allowed[i]);
-        if(!strncmp(p,c->allowed[i],n) && (p[n]=='/' || !p[n]))return true;
-        if(dir && !strncmp(c->allowed[i],p,strlen(p)) && c->allowed[i][strlen(p)]=='/')return true;
+    for(size_t i=0;i<count;i++) {
+        size_t n=strlen(roots[i]);
+        if(!strncmp(p,roots[i],n) && (p[n]=='/' || !p[n]))return true;
+        if(dir && !strncmp(roots[i],p,strlen(p)) && roots[i][strlen(p)]=='/')return true;
     }
     return false;
+}
+static bool allowed(context *c,const char *path,bool dir) {
+    return tb_placement_allowed(path,dir,c->allowed,c->nallowed);
 }
 static int profileline(void *u,size_t l,int fmt,char **f,size_t n) {
     context *c=u;

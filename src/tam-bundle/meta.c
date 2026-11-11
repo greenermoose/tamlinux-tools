@@ -339,6 +339,11 @@ void tb_hash_settings(const char *btext, size_t blen, const char *mtext, size_t 
 void tb_bundle_hash(const char *b, size_t bn, const char *m, size_t mn, char out[TB_HASH_LEN+1]) {
     tb_hash_settings(b, bn, m, mn, NULL, 0, out);
 }
+bool tb_buildenv_matches(const char *hash,const tb_manifest_t *m) {
+    if(!hash)return true;
+    const tb_entry_t *record=tb_manifest_find(m,m->format==2?"tree/recipe/BUILDENV":"recipe/BUILDENV");
+    return record && record->type=='f' && !strcmp(record->value,hash);
+}
 
 int tb_tree_read(int dirfd, const char *dir, tb_bundle_t *b, tb_manifest_t *m) {
     char bpath[4200], mpath[4200];
@@ -371,12 +376,12 @@ int tb_tree_read(int dirfd, const char *dir, tb_bundle_t *b, tb_manifest_t *m) {
     if (b->format == 2) {
         char spath[4200];
         snprintf(spath, sizeof spath, "%s/SETTINGS", dir);
-        settings = tb_read_at(dirfd, spath, &slen);
+        settings = tb_read_limit(dirfd, spath, &slen,16U*1024U*1024U);
     }
     tb_hash_settings(btext, blen, mtext, mlen, settings, slen, hash);
     bool formats_ok = b->format == m->format && (b->format == 1 || settings);
     free(settings);
-    if (!formats_ok || strcmp(hash, b->hash) != 0) {
+    if (!formats_ok || strcmp(hash, b->hash) != 0 || !tb_buildenv_matches(b->buildenv,m)) {
         tb_err("%s: BUNDLE and MANIFEST do not match the recorded hash", dir);
         tb_bundle_free(b);
         tb_manifest_free(m);

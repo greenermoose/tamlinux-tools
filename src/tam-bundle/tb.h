@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-#define TB_VERSION "0.8.0"
+#define TB_VERSION "0.9.0"
 #define TB_FORMAT 2               /* newest record format this program reads */
 #define TB_DEFAULT_SLOT "/usr/lib/tamlinux"
 #define TB_SYSTEM_STATE "/var/lib/tam-bundle"
@@ -264,6 +264,7 @@ typedef struct {
 typedef struct {
     tb_lock_entry_t *v;
     size_t           n;
+    char *text; size_t len;
 } tb_lock_t;
 
 int  tb_lock_read(const char *path, tb_lock_t *l);
@@ -299,7 +300,11 @@ typedef struct {
 } tb_recipe_file_t;
 
 typedef struct {
+    int format;
+    char *text; size_t len;
     char        *name, *host;
+    char **targets; size_t ntargets;
+    char **placed; size_t nplaced;
     char       **needs; size_t nneeds;
     char       **after; size_t nafter;
     bool         index_man;        /* `index man`: build share/man's index */
@@ -403,4 +408,6 @@ int tb_link_check(const char *root,const char *product,const tb_bundle_t *b,bool
 int tb_elf_probe(const char *root,const char *product,const tb_bundle_t *b,const char *path);
 int tb_runtime_open(int root,const char *absolute);
 int tb_version_compare(const char *actual,const char *required);
+bool tb_placement_allowed(const char *path,bool directory,char *const *roots,size_t n);
+bool tb_buildenv_matches(const char *hash,const tb_manifest_t *m);
 #endif

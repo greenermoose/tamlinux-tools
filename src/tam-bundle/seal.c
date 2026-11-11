@@ -25,6 +25,7 @@ int tb_seal(const char *dir, const tb_seal_t *o, char id[256]) {
     }
     tb_manifest_t m;
     if ((o->format == 2 ? tb_v2_manifest(dir, &m) : tb_manifest_build(dir, &m)) != 0) return TB_FAIL;
+    if(!tb_buildenv_matches(o->buildenv,&m)){tb_err("buildenv does not match the carried recipe/BUILDENV record"); tb_manifest_free(&m); return TB_FAIL;}
 
     char built[64];
     if (o->built) {

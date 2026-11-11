@@ -95,6 +95,10 @@ builds and a fully static production tool. The public design's 0.8
 checkpoint specifies the actual rootstock profile id, requirement forms,
 ELF and QML checks, `recipe/BUILDENV`, and cache `done` record.
 
+The developer reviewed the exact checkpoint in Micro and responded:
+
+> Approve 0.8 tool; continue recipes
+
 - Arch package queries cover database-listed paths even when absent on
   disk. Prepare and apply/retry refuse native conflicts and unmet runtime
   requirements. Target checks run first; `status` and `check` report
@@ -130,3 +134,28 @@ installation or a power-cut, login, console or Nix recovery proof. The
 existing builder still builds its legacy slot layout; the format-2
 workstation recipe split, tam nut and delivery integration are next. No
 assembly pin, Nix/Home Manager generation, candidate or release moved.
+
+## Format-2 workstation recipe checkpoint
+
+After reviewing the 0.8 tool checkpoint in Micro, the developer said
+“Approve 0.8 tool; continue recipes”.
+
+The development builder reports 0.9.0. It builds format-2 recipes with
+`PREFIX=/usr`, checks their placed paths and dependencies, and carries
+the exact recipe, lock and build environment in the versioned tree. The
+Quickshell Wayland probe reads the module's declared `typeinfo` filename
+and tests the exported version. Tar metadata is normalized so two builds
+at the same recorded time can produce the same archive bytes.
+
+The [workstation recipe proof](../plans/tam-bundle.md#format-2-workstation-recipe-checkpoint)
+names the exact packaging commit, output identity and archive SHA-256.
+A verified-cache build and a clean-cache build sealed the same manifest
+and metadata. Both archives compared byte for byte and the archive
+verified. The fixture also exercised format-2 apply and recovery in
+temporary roots. The tar comparison caught differences in timestamps and
+directory order before normalization.
+
+The development artifact has no Test, Run or Release authorization.
+The developer reviewed the recipe proof in Micro and said “Approve recipes;
+continue tam nut”. The tam nut, delivery integration and second-workstation
+proofs remain.

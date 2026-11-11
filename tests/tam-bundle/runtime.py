@@ -107,12 +107,14 @@ class Runtime(unittest.TestCase):
 
     def test_qml_and_isolated_python_probe(self):
         qmldir=self.root_file('usr/lib/qt6/qml/Example/Widgets/qmldir',b'module Example.Widgets\nThing 1.2 Thing.qml\n')
-        python=self.root_file('usr/bin/python3',b'#!/bin/sh\n[ "$1" = -I ] && [ "$4" = good_module ]\n',0o755)
+        python=self.root_file('usr/bin/python3',b'#!/bin/sh\n[ "$1" = -I ] && [ "$2" = -B ] && [ "$5" = good_module ]\n',0o755)
         self.reseal(self.a,needs=['qml Example.Widgets 1.1', 'python good_module'])
         self.tb('needs',self.a)
         qmldir.write_text('module Example.Widgets\n# Thing 99.0 fake.qml\n')
         self.tb('needs',self.a,code=1)
-        qmldir.write_text('module Example.Widgets\nThing 1.2 Thing.qml\n')
+        qmldir.write_text('module Example.Widgets\ntypeinfo widgets.qmltypes\n')
+        self.root_file('usr/lib/qt6/qml/Example/Widgets/widgets.qmltypes',b'Component { exports: ["Example.Widgets/Thing 1.2"] }\n')
+        self.tb('needs',self.a)
         python.write_text('#!/bin/sh\nexit 1\n'); self.tb('needs',self.a,code=1)
 
     def test_elf_probe_refuses_malformed_missing_and_never_executes(self):

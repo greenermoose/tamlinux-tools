@@ -759,11 +759,20 @@ and
 .B after
 lines, and
 .B "index man"
-to build the manual index.
+to build the format-1 manual index. A format-2 recipe declares
+.B target
+records for the runtime contract and
+.B place
+records for allowed relative paths under usr/.
+Components stage with PREFIX=/usr. Staged lib/tamlinux/current becomes
+tree/ and the remaining allowed files become placed/usr/.
+The recipe, component recipes, lock and BUILDENV are carried in tree/recipe/.
+The installed rootstock profile independently checks placement.
 .B file
 .I packaging-path tree-path
 adds a regular file from the packaging repository's HEAD commit as mode
-0644. Paths must be relative; the destination may contain spaces.
+0644. Paths must be relative. Format-2 destinations are SETTINGS, tree/
+or placed/usr/. The destination may contain spaces.
 Parents are created without following links. Existing files, links as
 sources, and destinations BUNDLE and MANIFEST are refused.
 When recipes are in Git, the bundle file, recipes and lock must match
