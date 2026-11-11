@@ -632,10 +632,10 @@ static int systemline(void *arg,size_t line,int fmt,char **f,size_t n) {
     (void)line; (void)fmt;
     system_tx *t=arg;
     if(n!=2)return 1;
-    const char *keys[]={"id","from","to","state","capture","uid","kind","done"};
+    const char *keys[]={"id","from","to","state","capture","uid","kind","done","activation"};
     char *slots[]={t->id,t->from,t->to,t->state};
     size_t caps[]={sizeof t->id,sizeof t->from,sizeof t->to,sizeof t->state};
-    for(size_t i=0;i<8;i++)if(!strcmp(f[0],keys[i])) {
+    for(size_t i=0;i<9;i++)if(!strcmp(f[0],keys[i])) {
         if(t->fields&(1U<<i))return 1;
         t->fields|=1U<<i;
         if(i<4) {
@@ -644,6 +644,7 @@ static int systemline(void *arg,size_t line,int fmt,char **f,size_t n) {
         }
         if(i==4)return strcmp(f[1],"-")!=0;
         if(i==6)return strcmp(f[1],"product-only")!=0;
+        if(i==8)return strcmp(f[1],"-") && !shash_valid(f[1]);
         if(!number_valid(f[1],i==5?UINT_MAX:ULONG_MAX))return 1;
         if(i==5)t->uid=strtoul(f[1],NULL,10);
         return 0;
@@ -659,7 +660,7 @@ static int system_read(const char *root,system_tx *t) {
     if(!text && errno==ENOENT)text=metadata(fd,"last-transaction",&n,4096);
     int r=text?tam_rec_parse(text,n,2,1,systemline,t,NULL):-1;
     free(text); close(fd);
-    if(r || t->fields!=255 || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
+    if(r || (t->fields!=255 && t->fields!=511) || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
        !strcmp(t->to,"-") || !strcmp(t->from,t->to) ||
        (strcmp(t->state,"ready") && strcmp(t->state,"staging") && strcmp(t->state,"applying") &&
         strcmp(t->state,"activating") && strcmp(t->state,"complete")))return -1;

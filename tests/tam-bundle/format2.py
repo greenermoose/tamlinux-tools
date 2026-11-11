@@ -111,6 +111,18 @@ class ProductTransactions(unittest.TestCase):
         self.assertIn('previous: '+self.id(self.a),status)
         self.assertIn('bundle-hash: sha256:',status)
 
+    def test_privileged_prepare_records_the_invoking_user(self):
+        self.assertEqual(os.getuid(),0)  # mapped root inside the required namespace
+        self.tb('install',self.a,env={'PKEXEC_UID':'1000'})
+        self.assertEqual(self.tx()['uid'],'1000')
+        for invalid in ('-1','4294967295','1000 extra'):
+            with self.subTest(invalid=invalid):
+                r=self.tb('install',self.b,code=1,env={'PKEXEC_UID':invalid})
+                self.assertIn('invalid invoking user',r.stderr)
+                self.assertEqual(self.tx()['to'],self.id(self.a))
+        self.tb('apply')
+        self.assertEqual(self.tx()['uid'],'1000')
+
     def test_staged_corruption_refuses_before_live_mutation(self):
         self.install_a(); self.tb('install',self.b)
         stage=self.root/'usr/lib/tamlinux/staging'/self.tx()['id']/'placed/usr/bin/tam-demo'
@@ -396,6 +408,28 @@ class ProductTransactions(unittest.TestCase):
         self.tb('cancel',code=4)
         (self.base/'allow').touch();self.tb('apply');self.assert_live(self.b)
         self.assertIn('restart-new',(self.base/'actions').read_text())
+
+    def test_changed_system_profile_restarts_required_activation(self):
+        self.install_a()
+        profile=self.root/'usr/share/tamlinux/rootstock/profile'
+        original=profile.read_text()
+        log=self.base/'activation'
+        for name,body in [('first',f'echo first >> "{log}"'),('blocked','exit 1'),
+                          ('replacement',f'echo replacement >> "{log}"')]:
+            helper=profile.parent/name
+            helper.write_text('#!/bin/sh\n'+body+'\n')
+            helper.chmod(0o755)
+        profile.write_text(original+'step first required usr/share/tamlinux/rootstock/first\n'
+                           +'step blocked required usr/share/tamlinux/rootstock/blocked\n')
+        self.tb('install',self.b)
+        self.tb('apply',code=3)
+        self.assertEqual(self.tx()['done'],'1')
+        digest=self.tx()['activation']
+        profile.write_text(original+'step replacement required usr/share/tamlinux/rootstock/replacement\n')
+        self.tb('apply')
+        self.assertEqual(log.read_text().splitlines(),['first','replacement'])
+        self.assertNotEqual(self.tx()['activation'],digest)
+        self.assert_live(self.b)
 
     def test_decline_and_recheck_failure_restart_old_services(self):
         self.install_a()

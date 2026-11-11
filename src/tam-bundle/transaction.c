@@ -5,6 +5,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <linux/stat.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +14,7 @@
 
 typedef struct {
     char id[65], from[256], to[256], state[16];
+    char activation[TB_HASH_LEN+1];
     unsigned long uid;
     size_t done;
     unsigned fields;
@@ -35,6 +37,28 @@ static bool identity(const char *s) {
     if (!s || !*s || strlen(s)>240 || !strcmp(s,".") || !strcmp(s,"..")) return false;
     for (;*s;s++) if (!strchr("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._+-",*s))return false;
     return true;
+}
+static bool activation_hash(const char *s) {
+    return !strcmp(s,"-") ||
+        (strlen(s)==TB_HASH_LEN && !strncmp(s,"sha256:",7) &&
+         strspn(s+7,"0123456789abcdef")==64);
+}
+static bool uid_number(const char *text,unsigned long *uid) {
+    if(!*text || strspn(text,"0123456789")!=strlen(text))return false;
+    errno=0;
+    unsigned long parsed=strtoul(text,NULL,10);
+    if(errno || parsed>=UINT_MAX)return false;
+    *uid=parsed;
+    return true;
+}
+static int prepare_uid(unsigned long *uid) {
+    *uid=getuid();
+    const char *caller=*uid==0?getenv("PKEXEC_UID"):NULL;
+    if(caller && !uid_number(caller,uid)) {
+        tb_err("invalid invoking user in PKEXEC_UID");
+        return -1;
+    }
+    return 0;
 }
 static int parent(int base, const char *path, bool create, char **leaf) {
     if (!tam_path_is_safe_rel(path)) return -1;
@@ -104,7 +128,7 @@ static int txline(void *u,size_t line,int fmt,char **f,size_t n) {
     (void)line;
     (void)fmt;
     if(n!=2)return 1;
-    const char *keys[]={"id","from","to","state","uid","done","capture","kind"};
+    const char *keys[]={"id","from","to","state","uid","done","capture","kind","activation"};
     unsigned bit=0;
     for(size_t i=0;i<sizeof keys/sizeof *keys;i++)
         if(!strcmp(f[0],keys[i]))bit=1U<<i;
@@ -124,14 +148,19 @@ static int txline(void *u,size_t line,int fmt,char **f,size_t n) {
     else if(!strcmp(f[0],"state")){dst=t->state;
     cap=sizeof t->state;
     }
-    else if(!strcmp(f[0],"uid") || !strcmp(f[0],"done")) {
+    else if(!strcmp(f[0],"activation")) {
+        if(!activation_hash(f[1]))return 1;
+        dst=t->activation;
+        cap=sizeof t->activation;
+    }
+    else if(!strcmp(f[0],"uid"))return !uid_number(f[1],&t->uid);
+    else if(!strcmp(f[0],"done")) {
         char *end;
     errno=0;
     unsigned long v=strtoul(f[1],&end,10);
     if(errno || !*f[1] || strspn(f[1],"0123456789")!=strlen(f[1]) || *end)return 1;
-        if(!strcmp(f[0],"uid"))t->uid=v;
-    else t->done=v;
-    return 0;
+        t->done=v;
+        return 0;
     } else if(!strcmp(f[0],"capture"))return strcmp(f[1],"-")!=0;
     else if(!strcmp(f[0],"kind"))return strcmp(f[1],"product-only")!=0;
     else return 1;
@@ -142,12 +171,12 @@ static int txline(void *u,size_t line,int fmt,char **f,size_t n) {
 static int readtx(context *c) {
     memset(&c->tx,0,sizeof c->tx);
     size_t len=0;
-    char *text=tb_read_at(c->state,"transaction",&len);
+    char *text=tb_read_limit(c->state,"transaction",&len,4096);
     if(!text)return errno==ENOENT?0:-1;
     int r=tam_rec_parse(text,len,2,1,txline,&c->tx,NULL);
     free(text);
     transaction *t=&c->tx;
-    if(r || t->fields!=255 || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
+    if(r || (t->fields!=255 && t->fields!=511) || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
        !identity(t->from) || !identity(t->to) || !strcmp(t->to,"-") || !strcmp(t->from,t->to) ||
        (strcmp(t->state,"staging") && strcmp(t->state,"ready") && strcmp(t->state,"applying") && strcmp(t->state,"activating") && strcmp(t->state,"complete"))) {
         tb_err("invalid transaction; desktop must remain blocked");
@@ -158,7 +187,8 @@ static int readtx(context *c) {
 static int state(context *c,const char *s) {
     snprintf(c->tx.state,sizeof c->tx.state,"%s",s);
     char text[1024];
-    int n=snprintf(text,sizeof text,"format 1\nid %s\nfrom %s\nto %s\ncapture -\nuid %lu\nkind product-only\nstate %s\ndone %zu\n",c->tx.id,c->tx.from,c->tx.to,c->tx.uid,s,c->tx.done);
+    int n=snprintf(text,sizeof text,"format 1\nid %s\nfrom %s\nto %s\ncapture -\nuid %lu\nkind product-only\nstate %s\ndone %zu\nactivation %s\n",
+        c->tx.id,c->tx.from,c->tx.to,c->tx.uid,s,c->tx.done,*c->tx.activation?c->tx.activation:"-");
     if(atomic(c->state,"transaction",text,(size_t)n))return -1;
     char fault[64];
     snprintf(fault,sizeof fault,"v2-state-%s",s);
@@ -541,6 +571,8 @@ static int cancel(context *c) {
     return r?TB_FAIL:TB_OK;
 }
 static int prepare(context *c,const char *source) {
+    unsigned long uid;
+    if(prepare_uid(&uid))return TB_FAIL;
     int have=readtx(c);
     if(have<0)return TB_INTERRUPTED;
     if(have && !strcmp(c->tx.state,"complete")){if(archive_complete(c))return TB_FAIL;
@@ -561,7 +593,7 @@ static int prepare(context *c,const char *source) {
     goto done;
     }
     strcpy(c->tx.to,b.id);
-    c->tx.uid=getuid();
+    c->tx.uid=uid;
     unsigned char random[16];
     if(getrandom(random,sizeof random,0)!=sizeof random)goto done;
     for(size_t i=0;i<sizeof random;i++)snprintf(c->tx.id+i*2,3,"%02x",random[i]);
@@ -649,6 +681,27 @@ static int resume_check(context *c,const tb_manifest_t *m,const tb_manifest_t *o
     }
     return 0;
 }
+static bool activation_plan(const context *c,char hash[TB_HASH_LEN+1]) {
+    tam_str_t plan=tam_str_new("format 1\n");
+    if(c->services && plan) {
+        const char *fields[]={"services",c->services};
+        plan=tam_rec_cat(plan,fields,2);
+    }
+    for(size_t i=0;i<c->nsteps && plan;i++) {
+        const char *fields[]={"step",c->steps[i],c->required[i]?"required":"optional",c->commands[i]};
+        plan=tam_rec_cat(plan,fields,4);
+    }
+    if(!plan)return false;
+    tam_sha256_t digest;
+    uint8_t bytes[TAM_SHA256_LEN];
+    tam_sha256_init(&digest);
+    tam_sha256_update(&digest,plan,tam_str_len(plan));
+    tam_sha256_final(&digest,bytes);
+    tam_str_free(plan);
+    memcpy(hash,"sha256:",7);
+    tam_sha256_hex(bytes,hash+7);
+    return true;
+}
 static int apply(context *c,bool yes) {
     int have=readtx(c);
     if(have<0)return TB_INTERRUPTED;
@@ -660,6 +713,8 @@ static int apply(context *c,bool yes) {
     tb_bundle_t b={0},oldb={0};
     tb_manifest_t m={0},oldm={0};
     int r=TB_INTERRUPTED;
+    char activation[TB_HASH_LEN+1];
+    if(!activation_plan(c,activation))goto done;
     if(load(c,c->tx.to,&b,&m))goto done;
     if(strcmp(c->tx.from,"-") && load(c,c->tx.from,&oldb,&oldm))goto done;
     char *versions=tam_path_join(c->root,"usr/lib/tamlinux/version");
@@ -740,10 +795,16 @@ static int apply(context *c,bool yes) {
         if(atomic(c->state,"record",m.text,m.len))goto done;
         char keep[300];
     int n=snprintf(keep,sizeof keep,"format 1\nprevious %s\n",c->tx.from);
+        strcpy(c->tx.activation,activation);
         if(atomic(c->state,"keep",keep,(size_t)n) || state(c,"activating") || syncall(c->slot))goto done;
     }
     if(!strcmp(c->tx.state,"activating")) {
         if(version_check(c,c->tx.to,&m) || resume_check(c,&m,&oldm,true))goto done;
+        if(strcmp(c->tx.activation,activation)) {
+            strcpy(c->tx.activation,activation);
+            c->tx.done=0;
+            if(state(c,"activating"))goto done;
+        }
         if(c->tx.done>c->nsteps)goto done;
         for(size_t i=c->tx.done;i<c->nsteps;i++) {
             if(command(c,c->commands[i],"apply") && c->required[i]){r=TB_AFTER_FAILED;
