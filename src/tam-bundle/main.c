@@ -44,6 +44,7 @@ static const char usage_text[] =
     "\n"
     "Options:\n"
     "  --root DIR      format 2 installation root (default /)\n"
+    "  --expect-bundle HASH   bind prepare to the selected full bundle hash\n"
     "  --format 1|2    seal format (default 1); --target TEXT records a target\n"
     "  --slot DIR      slot directory (default " TB_DEFAULT_SLOT ")\n"
     "  --state DIR     state directory (default by user; see tam-bundle(1))\n"
@@ -68,7 +69,7 @@ static int usage(const char *why) {
 }
 
 typedef struct {
-    const char *slot, *state, *root;
+    const char *slot, *state, *root, *expected_bundle;
     int format;
     bool if_pending;
     const char *targets[16]; size_t ntargets;
@@ -166,7 +167,20 @@ static int cmd_verify(const opts_t *o) {
 }
 
 static int cmd_needs(const opts_t *o) {
-    if (o->nargs != 2) return usage("needs needs a directory");
+    if (o->nargs != 2) return usage("needs needs a directory or archive");
+    struct stat source;
+    if(lstat(o->args[1],&source))return TB_FAIL;
+    if(S_ISREG(source.st_mode)) {
+        char temp[]="/tmp/tam-bundle-needs-XXXXXX";
+        if(!mkdtemp(temp))return TB_FAIL;
+        opts_t extracted=*o;
+        extracted.args[1]=temp;
+        int result=TB_FAIL;
+        if(!tb_archive_unpack(o->args[1],temp) && !tb_v2_verify(temp))
+            result=cmd_needs(&extracted);
+        if(tb_remove_at(AT_FDCWD,"/",temp+1))result=TB_FAIL;
+        return result;
+    }
     tb_bundle_t b;
     tb_manifest_t m;
     if (tb_tree_read(AT_FDCWD, o->args[1], &b, &m) != 0) return TB_FAIL;
@@ -485,6 +499,7 @@ int main(int argc, char **argv) {
             return TB_OK;
         }
         else if (strcmp(a, "--root") == 0) { VALUE(); o.root = v; }
+        else if (strcmp(a, "--expect-bundle") == 0) { VALUE(); o.expected_bundle = v; }
         else if (strcmp(a, "--format") == 0) { VALUE(); if(strcmp(v,"1") && strcmp(v,"2")) return usage("format must be 1 or 2"); o.format=atoi(v); }
         else if (strcmp(a, "--target") == 0) { VALUE(); if(!add(o.targets,&o.ntargets,16,v)) return usage("too many targets"); }
         else if (strcmp(a, "--if-pending") == 0) o.if_pending=true;
@@ -515,6 +530,12 @@ int main(int argc, char **argv) {
     }
     if (!o.nargs) return usage("no command given");
     const char *cmd = o.args[0];
+
+    if(o.expected_bundle &&
+       ((strcmp(cmd,"install") && strcmp(cmd,"prepare") && strcmp(cmd,"restore")) ||
+        strlen(o.expected_bundle)!=TB_HASH_LEN || strncmp(o.expected_bundle,"sha256:",7) ||
+        strspn(o.expected_bundle+7,"0123456789abcdef")!=64))
+        return usage("--expect-bundle needs a full SHA-256 and a prepare operation");
 
     if(!strcmp(cmd,"startup-ready")) {
         if(o.nargs!=1 || o.output)return usage("unexpected startup arguments");
@@ -564,7 +585,7 @@ int main(int argc, char **argv) {
     }
     if (o.root || !strcmp(cmd,"install") || !strcmp(cmd,"prepare") || !strcmp(cmd,"apply") || !strcmp(cmd,"cancel") || !strcmp(cmd,"restore") || !strcmp(cmd,"native-status")) {
         if (o.nargs > 2) return usage("too many transaction arguments");
-        return tb_v2_main(o.root ? o.root : "/", cmd, o.nargs==2 ? o.args[1] : NULL, o.sw.dry_run, o.if_pending, o.yes);
+        return tb_v2_main(o.root ? o.root : "/", cmd, o.nargs==2 ? o.args[1] : NULL, o.sw.dry_run, o.if_pending, o.yes,o.expected_bundle);
     }
     if (strcmp(cmd, "seal") == 0) return cmd_seal(&o);
     if (strcmp(cmd, "verify") == 0) return cmd_verify(&o);

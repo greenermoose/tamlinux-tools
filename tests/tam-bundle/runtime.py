@@ -128,6 +128,12 @@ class Runtime(unittest.TestCase):
         dep=self.root_file('usr/lib/dependency')
         self.reseal(self.a,needs=['file /usr/lib/dependency']); self.install_a()
         self.reseal(self.b,needs=['file /usr/lib/new-dependency'])
+        new_dependency=self.root_file('usr/lib/new-dependency')
+        archive=self.base/'runtime.tbundle'
+        self.run_tb('pack',self.b,'-o',archive)
+        self.tb('needs',archive)
+        new_dependency.unlink()
+        self.tb('needs',archive,code=1)
         self.root_file('usr/lib/new-dependency')
         self.tb('install',self.b); dep.unlink()
         self.tb('status',code=4) # pending barrier takes precedence

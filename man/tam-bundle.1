@@ -359,7 +359,7 @@ Hash every file in a bundle, kept tree or live tree and compare it with
 .BR MANIFEST ,
 then report extra, missing and edited entries.
 .TP
-.BI needs " dir"
+.BI needs " dir-or-archive"
 Report unmet native requirements with the recorded install hints.
 Format 1 retains the presence check for a command on
 .B PATH
@@ -482,6 +482,10 @@ than the listed size.
 .B after
 Run the live bundle's post-install steps as the invoking user.
 .SH OPTIONS
+.TP
+.BI \-\-expect-bundle " hash"
+Bind a format-2 prepare operation to the selected complete SHA-256 bundle
+identity. A different verified archive is refused before staging a transaction.
 .TP
 .BI \-\-slot " dir"
 The slot (default

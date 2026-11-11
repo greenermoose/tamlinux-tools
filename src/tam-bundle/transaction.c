@@ -21,6 +21,7 @@ typedef struct {
 } transaction;
 typedef struct {
     const char *root;
+    const char *expected_bundle;
     int rootfd, slot, state, lock;
     transaction tx;
     char **allowed;
@@ -585,6 +586,10 @@ static int prepare(context *c,const char *source) {
     tb_manifest_t m={0},oldm={0};
     int r=TB_FAIL;
     if(tb_tree_read(AT_FDCWD,source,&b,&m) || b.format!=2 || tb_v2_verify(source))goto done;
+    if(c->expected_bundle && strcmp(c->expected_bundle,b.hash)) {
+        tb_err("bundle hash differs from the selected delivery");
+        goto done;
+    }
     if(tb_contract_check(c->root,source,&b,false))goto done;
     if(have && cancel(c))goto done;
     memset(&c->tx,0,sizeof c->tx);
@@ -844,9 +849,9 @@ static int retained_contracts(context *c,bool native_hook) {
     }
     closedir(dir); return result;
 }
-int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if_pending,bool yes) {
+int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if_pending,bool yes,const char *expected_bundle) {
     (void)if_pending;
-    context c={.root=root,.rootfd=-1,.slot=-1,.state=-1,.lock=-1};
+    context c={.root=root,.expected_bundle=expected_bundle,.rootfd=-1,.slot=-1,.state=-1,.lock=-1};
     int r=TB_FAIL;
     bool prepare_cmd=!strcmp(cmd,"install") || !strcmp(cmd,"prepare") || !strcmp(cmd,"restore");
     bool reading=!strcmp(cmd,"status") || !strcmp(cmd,"check");

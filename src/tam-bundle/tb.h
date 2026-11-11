@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-#define TB_VERSION "0.10.0"
+#define TB_VERSION "0.11.0"
 #define TB_FORMAT 2               /* newest record format this program reads */
 #define TB_DEFAULT_SLOT "/usr/lib/tamlinux"
 #define TB_SYSTEM_STATE "/var/lib/tam-bundle"
@@ -374,7 +374,7 @@ extern bool tb_quiet;
 /* Format 2 product transactions. Paths are rooted at root (default /).
  * Profile commands are supplied by the rootstock, never the bundle. */
 int tb_v2_main(const char *root, const char *cmd, const char *arg, bool dry,
-               bool if_pending, bool yes);
+               bool if_pending, bool yes, const char *expected_bundle);
 int tb_v2_verify(const char *dir);
 int tb_archive_unpack(const char *archive, const char *dest);
 int tb_archive_pack(const char *dir, const char *archive);

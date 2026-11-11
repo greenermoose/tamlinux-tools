@@ -123,6 +123,17 @@ class ProductTransactions(unittest.TestCase):
         self.tb('apply')
         self.assertEqual(self.tx()['uid'],'1000')
 
+    def test_prepare_is_bound_to_the_selected_full_bundle_hash(self):
+        metadata=dict(line.split(' ',1) for line in (self.a/'BUNDLE').read_text().splitlines())
+        wrong='sha256:'+'0'*64
+        self.tb('install',self.a,'--expect-bundle',wrong,code=1)
+        self.assertIsNone(self.tx())
+        self.assertFalse((self.root/'usr/lib/tamlinux/current').exists())
+        self.tb('install',self.a,'--expect-bundle','short',code=2)
+        self.tb('install',self.a,'--expect-bundle',metadata['hash'])
+        self.tb('apply')
+        self.assert_live(self.a)
+
     def test_staged_corruption_refuses_before_live_mutation(self):
         self.install_a(); self.tb('install',self.b)
         stage=self.root/'usr/lib/tamlinux/staging'/self.tx()['id']/'placed/usr/bin/tam-demo'

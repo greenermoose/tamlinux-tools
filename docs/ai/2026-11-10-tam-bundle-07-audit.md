@@ -196,3 +196,19 @@ The tests include default decline, refused authorization, interrupted
 apply and a native entry invoked against privately mounted fixture state.
 The design's console section records the helper refinement and remaining
 dormant-slot and delivery integration. Nothing was installed.
+
+## Exact-artifact preparation
+
+The 0.11.0 source adds `--expect-bundle sha256:...` to format-2
+install, prepare and restore. The fully verified carried bundle must match
+that full hash before staging or cancellation of an earlier transaction.
+`needs` also verifies and checks a portable archive in a private temporary
+directory, so delivery preflight requires no rebuild or live mutation.
+
+The full suite passed on 2026-11-11 with 28 product, 24 settings and
+12 runtime tests, ASan/UBSan, all build and publication tests, and mandatory
+private PID/private-proc isolation. The added cases verify a mismatched
+hash leaves the transaction and live installation untouched, malformed
+hashes refuse, and archived runtime checks detect a missing dependency.
+These are temporary-root proofs. Delivery activation, Home Manager link
+migration, dormant-slot conversion and real-machine acceptance remain open.
