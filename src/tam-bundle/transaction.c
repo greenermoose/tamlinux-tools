@@ -553,7 +553,7 @@ static int prepare(context *c,const char *source) {
     tb_manifest_t m={0},oldm={0};
     int r=TB_FAIL;
     if(tb_tree_read(AT_FDCWD,source,&b,&m) || b.format!=2 || tb_v2_verify(source))goto done;
-    if(tb_contract_check(c->root,source,&b))goto done;
+    if(tb_contract_check(c->root,source,&b,false))goto done;
     if(have && cancel(c))goto done;
     memset(&c->tx,0,sizeof c->tx);
     if(current(c,c->tx.from))goto done;
@@ -664,7 +664,7 @@ static int apply(context *c,bool yes) {
     if(strcmp(c->tx.from,"-") && load(c,c->tx.from,&oldb,&oldm))goto done;
     char *versions=tam_path_join(c->root,"usr/lib/tamlinux/version");
     char *product=versions?tam_path_join(versions,c->tx.to):NULL; free(versions);
-    int compatible=product?tb_contract_check(c->root,product,&b):-1; free(product);
+    int compatible=product?tb_contract_check(c->root,product,&b,false):-1; free(product);
     if(compatible || tb_native_conflicts(c->root,&m,&oldm))goto done;
     if(!strcmp(c->tx.state,"ready")) {
         bool stopped=false;
@@ -765,7 +765,7 @@ done:
     tb_manifest_free(&oldm);
     return r;
 }
-static int retained_contracts(context *c) {
+static int retained_contracts(context *c,bool native_hook) {
     int fd=directory(c->slot,"version",false);
     if(fd<0)return errno==ENOENT?0:-1;
     DIR *dir=fdopendir(fd);
@@ -776,7 +776,7 @@ static int retained_contracts(context *c) {
         tb_bundle_t b={0}; tb_manifest_t m={0};
         char *versions=tam_path_join(c->root,"usr/lib/tamlinux/version");
         char *path=versions?tam_path_join(versions,de->d_name):NULL; free(versions);
-        int r=!path || load(c,de->d_name,&b,&m) || tb_contract_check(c->root,path,&b);
+        int r=!path || load(c,de->d_name,&b,&m) || tb_contract_check(c->root,path,&b,native_hook);
         printf("runtime: %s %s\n",de->d_name,r?"incompatible":"compatible");
         if(r)result=-1;
         free(path); tb_bundle_free(&b); tb_manifest_free(&m);
@@ -796,6 +796,10 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
     if(c.slot<0 || c.state<0){if(!prepare_cmd && errno==ENOENT)r=TB_OK;
     goto done;
     }
+    if(!strcmp(cmd,"native-status")) {
+        r=arg?TB_USAGE:retained_contracts(&c,true)?TB_FAIL:TB_OK;
+        goto done;
+    }
     if(reading || dry) {
         char cur[256];
     if(current(&c,cur))goto done;
@@ -806,7 +810,7 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
         if(print_status(&c,cur))goto done;
         if(have)printf("transaction: %s\nstate: %s\nfrom: %s\nto: %s\ncapture: -\n",c.tx.id,c.tx.state,c.tx.from,c.tx.to);
         r=have && strcmp(c.tx.state,"complete")?TB_INTERRUPTED:TB_OK;
-        if(retained_contracts(&c) && r==TB_OK)r=TB_FAIL;
+        if(retained_contracts(&c,false) && r==TB_OK)r=TB_FAIL;
         if(!strcmp(cmd,"check") && strcmp(cur,"-")) {
             tb_bundle_t b={0};
     tb_manifest_t m={0};

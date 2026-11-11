@@ -364,6 +364,10 @@ The format-2 interface also reports runtime compatibility of every retained
 product, including recovery versions. An unmet retained contract is a
 failure; an outstanding transaction remains the stronger session barrier.
 .TP
+.B native-status
+Check retained format-2 runtime contracts from an Arch post-transaction hook,
+while Pacman still owns its database lock. The check is read-only.
+.TP
 .B check
 Compare the live tree with its
 .BR MANIFEST .

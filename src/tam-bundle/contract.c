@@ -201,13 +201,14 @@ static bool qml_probe(int root,const char *name,const char *want) {
     }
     free(text); free(path); free(mod); return ok;
 }
-int tb_contract_check(const char *rootpath,const char *product,const tb_bundle_t *b) {
+int tb_contract_check(const char *rootpath,const char *product,const tb_bundle_t *b,bool native_hook) {
     int root=open(rootpath,O_RDONLY|O_DIRECTORY|O_CLOEXEC),errors=0;
     if(root<0)return -1;
     /* Reject hardware/profile/loader mismatches before a native DB query. */
     if(targets(root,b,NULL)){close(root); return -1;}
     tb_native_t native;
-    if(tb_native_read(rootpath,true,&native)){close(root); return -1;}
+    int queried=native_hook?tb_native_read_hook(rootpath,&native):tb_native_read(rootpath,true,&native);
+    if(queried){close(root); return -1;}
     struct stat opened,path;
     if(fstat(root,&opened) || stat(native.root,&path) || opened.st_dev!=path.st_dev || opened.st_ino!=path.st_ino ||
        targets(root,b,&native)){close(root); tb_native_free(&native); return -1;}

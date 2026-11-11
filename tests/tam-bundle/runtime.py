@@ -64,6 +64,18 @@ class Runtime(unittest.TestCase):
         shutil.rmtree(self.root/'var/lib/pacman/local')
         self.tb('needs',self.b,code=1)
 
+    def test_post_transaction_check_reads_locked_database(self):
+        dep=self.root_file('usr/lib/native-dependency')
+        self.package('library','2.0-1',['usr/lib/native-dependency'])
+        self.reseal(self.a,needs=['file /usr/lib/native-dependency >= 2.0 arch=library'])
+        self.install_a()
+        (self.root/'var/lib/pacman/db.lck').write_text('package operation')
+        self.assertIn('compatible',self.tb('native-status').stdout)
+        self.tb('install',self.b,code=1)
+        dep.unlink()
+        result=self.tb('native-status',code=1)
+        self.assertIn('unmet runtime need: file /usr/lib/native-dependency',result.stderr)
+
     def test_targets_are_checked_before_needs(self):
         self.reseal(self.a,needs=['file /missing'],targets=['arch aarch64 baseline x86-64-v2'])
         r=self.tb('needs',self.a,code=1)

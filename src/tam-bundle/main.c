@@ -29,6 +29,7 @@ static const char usage_text[] =
     "  switch <dir>                 install a bundle and make it live\n"
     "  back [<bundle id>]           make the previous (or named) kept tree live again\n"
     "  status                       live bundle, previous, kept trees, interruptions\n"
+    "  native-status                check retained contracts from a native package hook\n"
     "  check                        find changes in the live tree\n"
     "  where <path>                 which bundle installed a file\n"
     "  keep <bundle id> <reason>    protect a kept tree from prune\n"
@@ -167,7 +168,7 @@ static int cmd_needs(const opts_t *o) {
     tb_bundle_t b;
     tb_manifest_t m;
     if (tb_tree_read(AT_FDCWD, o->args[1], &b, &m) != 0) return TB_FAIL;
-    size_t missing = b.format==2? (size_t)(tb_contract_check(o->root?o->root:"/",o->args[1],&b)!=0):tb_needs_check(&b,true);
+    size_t missing = b.format==2? (size_t)(tb_contract_check(o->root?o->root:"/",o->args[1],&b,false)!=0):tb_needs_check(&b,true);
     if (!missing) tb_note("%s: all %zu native needs are present", b.id, b.nneeds);
     tb_bundle_free(&b);
     tb_manifest_free(&m);
@@ -547,7 +548,7 @@ int main(int argc, char **argv) {
         struct stat st;
         if(!lstat(TB_DEFAULT_SLOT "/current",&st) && S_ISLNK(st.st_mode))o.root="/";
     }
-    if (o.root || !strcmp(cmd,"install") || !strcmp(cmd,"prepare") || !strcmp(cmd,"apply") || !strcmp(cmd,"cancel") || !strcmp(cmd,"restore")) {
+    if (o.root || !strcmp(cmd,"install") || !strcmp(cmd,"prepare") || !strcmp(cmd,"apply") || !strcmp(cmd,"cancel") || !strcmp(cmd,"restore") || !strcmp(cmd,"native-status")) {
         if (o.nargs > 2) return usage("too many transaction arguments");
         return tb_v2_main(o.root ? o.root : "/", cmd, o.nargs==2 ? o.args[1] : NULL, o.sw.dry_run, o.if_pending, o.yes);
     }

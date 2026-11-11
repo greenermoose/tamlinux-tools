@@ -398,12 +398,13 @@ typedef struct {
     tb_native_file *files; size_t nfiles;
 } tb_native_t;
 int tb_native_read(const char *root,bool files,tb_native_t *n);
+int tb_native_read_hook(const char *root,tb_native_t *n);
 void tb_native_free(tb_native_t *n);
 const char *tb_native_owner(const tb_native_t *n,const char *path);
 char *tb_native_version(const tb_native_t *n,const char *package);
 int tb_native_conflicts(const char *root,const tb_manifest_t *a,const tb_manifest_t *b);
 bool tb_need_valid(const char *kind,const char *target,const char *rest);
-int tb_contract_check(const char *root,const char *product,const tb_bundle_t *b);
+int tb_contract_check(const char *root,const char *product,const tb_bundle_t *b,bool native_hook);
 int tb_link_check(const char *root,const char *product,const tb_bundle_t *b,bool declarations);
 int tb_elf_probe(const char *root,const char *product,const tb_bundle_t *b,const char *path);
 int tb_runtime_open(int root,const char *absolute);

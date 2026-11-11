@@ -32,7 +32,7 @@ void tb_native_free(tb_native_t *n) {
     for(size_t i=0;i<n->nfiles;i++){free(n->files[i].path); free(n->files[i].package);}
     free(n->files); memset(n,0,sizeof *n);
 }
-int tb_native_read(const char *root,bool files,tb_native_t *n) {
+static int read_db(const char *root,bool files,bool hook,tb_native_t *n) {
     memset(n,0,sizeof *n);
     n->root=realpath(root,NULL);
     char *db=n->root?tam_path_join(n->root,"var/lib/pacman"):NULL;
@@ -40,7 +40,7 @@ int tb_native_read(const char *root,bool files,tb_native_t *n) {
     struct stat before,after,st;
     char *list=NULL; int result=-1;
     if(!db || !local || !lock || lstat(local,&before) || !S_ISDIR(before.st_mode) ||
-       !lstat(lock,&st) || errno!=ENOENT)goto done;
+       (!hook && (!lstat(lock,&st) || errno!=ENOENT)))goto done;
     n->versions=query(n->root,db,"-Q");
     if(!n->versions)goto done;
     if(files) {
@@ -70,12 +70,20 @@ int tb_native_read(const char *root,bool files,tb_native_t *n) {
         }
         qsort(n->files,n->nfiles,sizeof *n->files,cmp);
     }
-    if(lstat(local,&after) || !stable(&before,&after) || !lstat(lock,&st) || errno!=ENOENT)goto done;
+    if(lstat(local,&after) || !stable(&before,&after) ||
+       (!hook && (!lstat(lock,&st) || errno!=ENOENT)))goto done;
     result=0;
 done:
     free(list); free(db); free(local); free(lock);
     if(result){tb_err("native package database is unavailable, changing or locked"); tb_native_free(n);}
     return result;
+}
+int tb_native_read(const char *root,bool files,tb_native_t *n) {
+    return read_db(root,files,false,n);
+}
+int tb_native_read_hook(const char *root,tb_native_t *n) {
+    /* Pacman holds its lock for the duration of a post-transaction hook. */
+    return read_db(root,true,true,n);
 }
 const char *tb_native_owner(const tb_native_t *n,const char *path) {
     tb_native_file key={.path=(char *)path};
