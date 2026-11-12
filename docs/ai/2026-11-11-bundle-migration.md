@@ -36,7 +36,7 @@ records the concrete transaction extension and remaining migration gates.
 
 ## Verification
 
-The full `make test` passed with an exclusive checkout claim. ASan/UBSan
+The final full `make test` passed on 2026-11-12 with an exclusive checkout claim. ASan/UBSan
 reported no finding. All process tests retained mandatory private PID and
 private-proc containment, with no host-process fallback.
 
@@ -55,7 +55,8 @@ run. Temporary-root tests and the delivery coordinator's fixture results do
 not establish native package replacement, physical console authorization,
 login, power-loss safety, second-workstation acceptance or actual Nix return.
 
-The installed tool and native pin remain 0.5.2; Nix/Home Manager still delivers
-the workstation. No privileged installation, Test, Run or Release occurred.
+The legacy recipe pin remains 0.5.2; this source work does not establish an
+installed executable identity. Reconcile that identity before a live migration.
+Nix/Home Manager remains the delivery mechanism. No privileged installation, Test, Run or Release occurred.
 The bootstrap package must be rebuilt from the exact reviewed tool before any
 real candidate can use these interfaces.

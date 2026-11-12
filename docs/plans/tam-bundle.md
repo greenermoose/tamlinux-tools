@@ -45,7 +45,7 @@ The full tool suite passes: 33 product, 28 settings and 12 runtime tests,
 with sanitizers, 11 dormant-migration and 27 detach fault boundaries,
 existing build/cache and randomized interruption proofs, legacy reading,
 manual checks and policy validation. PID namespaces and private `/proc`
-remain mandatory without a host fallback. The installed 0.5.2 pin is held.
+remain mandatory without a host fallback. The legacy 0.5.2 recipe pin is unchanged.
 
 The first delivery bridge and its explicit remaining gates are recorded in
 [the product integration checkpoint](https://github.com/greenermoose/tamlinux/blob/develop/docs/plans/bundle-delivery-integration.md).
