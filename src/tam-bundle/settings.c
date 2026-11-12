@@ -707,9 +707,9 @@ static int first_product(user_settings *u,const char *root) {
     return 0;
 }
 static int settings_plan(user_settings *u,const char *root,const char *capture,bool only) {
-    settings_tx t; int have=tx_read(u->state,&t);
-    if(have<0 || (have && strcmp(t.state,"ready") && strcmp(t.state,"complete")))return TB_INTERRUPTED;
-    bool retain=have && !strcmp(t.state,"complete");
+    settings_tx t,previous; int have=tx_read(u->state,&previous);
+    if(have<0 || (only && have && strcmp(previous.state,"ready") && strcmp(previous.state,"complete")))return TB_INTERRUPTED;
+    bool retain=have && !strcmp(previous.state,"complete");
     if(capture && (!tam_path_is_safe_rel(capture) || strchr(capture,'/') || strlen(capture)>=sizeof t.capture))return TB_USAGE;
     memset(&t,0,sizeof t); strcpy(t.capture,capture?capture:"-"); strcpy(t.automatic,"-"); strcpy(t.activation,"-");
     strcpy(t.changes,"-");
@@ -722,7 +722,16 @@ static int settings_plan(user_settings *u,const char *root,const char *capture,b
         strcpy(t.from,u->productid); strcpy(t.to,u->productid); strcpy(t.kind,"settings-only");
     } else {
         system_tx sys;
-        if(system_read(root,&sys) || strcmp(sys.state,"ready") || strcmp(sys.from,u->productid) || sys.uid!=getuid())return TB_INTERRUPTED;
+        if(system_read(root,&sys) || sys.uid!=getuid() ||
+           (strcmp(sys.state,"ready") && strcmp(sys.state,"applying") &&
+            strcmp(sys.state,"activating") && strcmp(sys.state,"complete")) ||
+           (strcmp(sys.from,u->productid) && strcmp(sys.to,u->productid)))return TB_INTERRUPTED;
+        /* Retrying delivery must not discard an in-flight CHANGES plan or
+         * the switch-time capture. The system id is the authority here. */
+        if(have && !strcmp(previous.system,sys.id) && !strcmp(previous.id,sys.id) &&
+           !strcmp(previous.from,sys.from) && !strcmp(previous.to,sys.to) &&
+           !strcmp(previous.capture,capture?capture:"-"))return TB_OK;
+        if(have && strcmp(previous.state,"ready") && strcmp(previous.state,"complete"))return TB_INTERRUPTED;
         strcpy(t.id,sys.id); strcpy(t.system,sys.id); strcpy(t.from,sys.from); strcpy(t.to,sys.to); strcpy(t.kind,capture?"restore":"upgrade");
     }
     /* Planning reads lists and identities but never captures or stages user

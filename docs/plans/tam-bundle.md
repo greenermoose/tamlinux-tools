@@ -17,6 +17,43 @@
 - **Survey:** [2026-11-09 — File bundles, install records and atomic
   switching](../../upstream/2026-11-09-file-bundles-and-atomic-switch.md).
 
+## 0.12 migration source checkpoint
+
+The uninstalled 0.12.0 tool adds `migrate-dormant HASH` and `detach HASH`.
+Both bind the full SHA-256 and preserve retained payloads. A format-1 real
+slot is verified and archived beneath `legacy-v1/`, with its kept trees;
+its original state remains retained. It is not relabeled as a format-2
+installation. The first format-2 apply publishes the new `version/<id>`
+and `current` link normally.
+
+Detach uses the existing system transaction with `from <current id>` and
+`to -`, retaining `kind product-only`. The record stays **applying** while
+placed files and the link leave, then becomes **complete**. Only this new
+target value extends the record; `from -` and `to -` together are invalid.
+The full retained manifest and rollback copies are checked first, and all
+remaining live destinations are checked before further unlinks on retry.
+`apply` resumes an interrupted detach. No package removal is performed.
+
+Status now reports `target-hash` as well as the live full hash, so a delivery
+coordinator binds the exact prepared product rather than only its shortened
+bundle id. Settings preparation is idempotent for the same system/user
+transaction, retaining its capture and CHANGES. It also repairs a missing
+user plan after system apply, for the selected user and exact current or
+source product; an unrelated in-flight user transaction refuses.
+
+The full tool suite passes: 33 product, 28 settings and 12 runtime tests,
+with sanitizers, 11 dormant-migration and 27 detach fault boundaries,
+existing build/cache and randomized interruption proofs, legacy reading,
+manual checks and policy validation. PID namespaces and private `/proc`
+remain mandatory without a host fallback. The installed 0.5.2 pin is held.
+
+The first delivery bridge and its explicit remaining gates are recorded in
+[the product integration checkpoint](https://github.com/greenermoose/tamlinux/blob/develop/docs/plans/bundle-delivery-integration.md).
+Its real-C-engine fixtures and unactivated Home Manager build do not prove
+physical login, native replacement, power loss or Nix recovery acceptance.
+No native package or candidate stage has moved. The tool record is
+[here](../ai/2026-11-11-bundle-migration.md).
+
 ## Console activation integration
 
 The 0.11.0 source binds prepare to `--expect-bundle`'s full SHA-256 and

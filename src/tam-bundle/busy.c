@@ -45,6 +45,14 @@ static bool uses(const char *path,const char *root,const char *old,const tb_mani
     char *slot=tam_path_join(root,"usr/lib/tamlinux/current");
     bool match=path_matches(path,slot,true);
     free(slot);
+    if(m->format==1) {
+        const char *legacy[]={"usr/lib/tamlinux/kept","usr/lib/tamlinux/legacy-v1"};
+        for(size_t i=0;i<2;i++) {
+            slot=tam_path_join(root,legacy[i]);
+            match=match || path_matches(path,slot,true);
+            free(slot);
+        }
+    }
     char rel[300];
     snprintf(rel,sizeof rel,"usr/lib/tamlinux/version/%s",old);
     slot=tam_path_join(root,rel);

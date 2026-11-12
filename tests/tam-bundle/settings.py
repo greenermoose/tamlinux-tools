@@ -182,6 +182,23 @@ class UserSettings(unittest.TestCase):
         shutil.copytree(source/'var/lib/pacman',self.root/'var/lib/pacman')
         self.home=self.base/'fresh-home'; self.home.mkdir()
 
+    def test_delivery_prepare_retries_preserve_existing_changes_and_capture(self):
+        self.tb('prepare-settings');self.tb('apply-settings')
+        self.tb('install',self.b);self.tb('prepare-settings');self.tb('apply')
+        self.tb('apply-settings',code=99,env={'TAM_BUNDLE_FAULT':'settings-state-applying'})
+        transaction=self.home/'.local/state/tamlinux/transaction'
+        before=transaction.read_bytes()
+        self.tb('prepare-settings')
+        self.assertEqual(transaction.read_bytes(),before)
+        self.tb('apply-settings');self.tb('session-ready')
+        before=transaction.read_bytes();self.tb('prepare-settings')
+        self.assertEqual(transaction.read_bytes(),before)
+
+    def test_first_install_recovers_missing_user_plan_after_system_apply(self):
+        self.fresh_root();self.tb('install',self.b);self.tb('apply')
+        self.tb('session-ready',code=4)
+        self.tb('prepare-settings');self.tb('apply-settings');self.tb('session-ready')
+
     def test_first_install_prepares_without_current_then_completes_at_console(self):
         self.fresh_root()
         self.write('.bashrc','existing personal settings\n')

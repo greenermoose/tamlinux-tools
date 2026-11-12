@@ -205,6 +205,22 @@ Show the user file, its base default and its new default. Refuse secret
 paths, detected secrets and binary settings rather than printing them.
 .SS Product transactions (format 2, development interface)
 .TP
+.B migrate-dormant HASH
+Verify the full SHA-256 of a dormant format-1 real-directory slot and
+preserve its current and kept trees beneath legacy-v1. Refuse edits, busy
+processes, a pending legacy switch or a different recorded hash. The old
+state remains retained. This does not reinterpret a format-1 product as
+format 2; the first format-2 install starts without a current link.
+.TP
+.B detach HASH
+Remove the exact format-2 product's placed files and current link while
+retaining its archive, version tree and rollback copies. Used by the
+delivery coordinator before returning to its saved Nix generation.
+Refuse a different full hash, edited live files, corrupt rollback copies
+or busy processes. A durable transaction with target - keeps startup
+blocked until removal completes; apply and detach retry it forward.
+Native-package restoration remains a separately approved operation.
+.TP
 .BI install " bundle"
 Prepare a format 2 directory or portable
 .B .tbundle

@@ -1,5 +1,7 @@
 # AI collaboration session archive: `tamlinux-tools`
 
+- [2026-11-11 — Dormant slot migration and exact product detachment](2026-11-11-bundle-migration.md)
+
 Session records for AI-assisted work in this repository: date, tool and
 live-checked version, model, Fred's guiding prompts verbatim, the commits, and
 the decisions. Transcripts are retained privately by the author, so these

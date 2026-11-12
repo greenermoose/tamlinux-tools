@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/random.h>
+#include <sys/file.h>
 #include <unistd.h>
 
 typedef struct {
@@ -178,7 +179,7 @@ static int readtx(context *c) {
     free(text);
     transaction *t=&c->tx;
     if(r || (t->fields!=255 && t->fields!=511) || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
-       !identity(t->from) || !identity(t->to) || !strcmp(t->to,"-") || !strcmp(t->from,t->to) ||
+       !identity(t->from) || !identity(t->to) || !strcmp(t->from,t->to) ||
        (strcmp(t->state,"staging") && strcmp(t->state,"ready") && strcmp(t->state,"applying") && strcmp(t->state,"activating") && strcmp(t->state,"complete"))) {
         tb_err("invalid transaction; desktop must remain blocked");
     return -1;
@@ -707,6 +708,161 @@ static bool activation_plan(const context *c,char hash[TB_HASH_LEN+1]) {
     tam_sha256_hex(bytes,hash+7);
     return true;
 }
+
+/* A format-1 slot was dormant behind Nix. Preserve it as format 1; it
+ * cannot truthfully become a format-2 installed product without a rebuild.
+ * The exact old hash binds this one-way archival step. No payload is deleted. */
+static int migrate_dormant(context *c,const char *expected,bool dry) {
+    if(!expected || !activation_hash(expected) || !strcmp(expected,"-"))return TB_USAGE;
+    int have=readtx(c);
+    if(have)return TB_INTERRUPTED;
+    size_t n=0;
+    char *record=tb_read_limit(c->state,"legacy-dormant",&n,256);
+    char wanted[256];
+    int length=snprintf(wanted,sizeof wanted,"format 1\nhash %s\n",expected);
+    if(record && (n!=(size_t)length || memcmp(record,wanted,n))) {free(record); return TB_FAIL;}
+    bool recorded=record!=NULL;
+    free(record);
+    if(!recorded && errno!=ENOENT)return TB_FAIL;
+    struct stat st;
+    int inspected=fstatat(c->slot,"current",&st,AT_SYMLINK_NOFOLLOW);
+    if(inspected && errno!=ENOENT)return TB_FAIL;
+    bool original=!inspected;
+    if(original && !S_ISDIR(st.st_mode))return TB_FAIL;
+    int legacy=directory(c->slot,"legacy-v1",false);
+    if(legacy<0 && errno!=ENOENT)return TB_FAIL;
+    inspected=legacy<0?-1:fstatat(legacy,"current",&st,AT_SYMLINK_NOFOLLOW);
+    if(legacy>=0 && inspected && errno!=ENOENT){close(legacy);return TB_FAIL;}
+    bool archived=legacy>=0 && !inspected;
+    if(original==archived || (archived && !recorded)) {if(legacy>=0)close(legacy); return TB_FAIL;}
+    const char *source=original?"current":"legacy-v1/current";
+    tb_bundle_t b={0}; tb_manifest_t m={0}; tb_check_t check={0};
+    int result=TB_FAIL;
+    int oldstate=directory(c->rootfd,"var/lib/tam-bundle/tamlinux",false),oldlock=-1;
+    if(oldstate>=0) {
+        oldlock=openat(oldstate,"lock",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
+        struct stat pending;
+        bool blocked=(oldlock<0 && errno!=ENOENT) ||
+            (oldlock>=0 && flock(oldlock,LOCK_EX|LOCK_NB)) ||
+            !fstatat(oldstate,"switch",&pending,AT_SYMLINK_NOFOLLOW) || errno!=ENOENT;
+        close(oldstate);
+        if(blocked) {if(oldlock>=0)close(oldlock); if(legacy>=0)close(legacy); return TB_INTERRUPTED;}
+    } else if(errno!=ENOENT) {if(legacy>=0)close(legacy); return TB_FAIL;}
+    char *slot=tam_path_join(c->root,"usr/lib/tamlinux");
+    char *path=slot?tam_path_join(slot,source):NULL;
+    if(!path || tb_tree_read(c->slot,source,&b,&m) || b.format!=1 || strcmp(b.hash,expected) ||
+       tb_tree_check(path,&m,NULL,true,&check) || check.edited || check.extra || check.missing)goto done;
+    if(tb_busy(c->root,b.id,&m,false))goto done;
+    if(dry) {tb_note("Preserve dormant %s under legacy-v1; no format-2 current yet",b.id); result=TB_OK; goto done;}
+    if(!recorded && atomic(c->state,"legacy-dormant",wanted,(size_t)length))goto done;
+    if(legacy<0)legacy=directory(c->slot,"legacy-v1",true);
+    if(legacy<0)goto done;
+    if(original) {
+        if(renameat(c->slot,"current",legacy,"current"))goto done;
+        tb_fault("migration-current-rename");
+        if(syncdir(c->slot) || syncdir(legacy))goto done;
+    }
+    if(!fstatat(c->slot,"kept",&st,AT_SYMLINK_NOFOLLOW)) {
+        struct stat dest;
+        if(!S_ISDIR(st.st_mode) || !fstatat(legacy,"kept",&dest,AT_SYMLINK_NOFOLLOW) || errno!=ENOENT ||
+           renameat(c->slot,"kept",legacy,"kept"))goto done;
+        tb_fault("migration-kept-rename");
+        if(syncdir(c->slot) || syncdir(legacy))goto done;
+    } else if(errno!=ENOENT)goto done;
+    if(syncall(c->slot))goto done;
+    result=TB_OK;
+done:
+    if(oldlock>=0)close(oldlock);
+    if(legacy>=0)close(legacy);
+    free(slot); free(path);
+    tb_check_free(&check); tb_bundle_free(&b); tb_manifest_free(&m);
+    return result;
+}
+
+/* Return to a separately saved Nix generation. The normal transaction is
+ * the startup barrier until every placed file is removed and current is
+ * absent. Unpacked versions and .placed copies remain available. */
+static int detach_apply(context *c) {
+    tb_bundle_t b={0}; tb_manifest_t old={0},empty={0};
+    int result=TB_INTERRUPTED;
+    char cur[256];
+    if(load(c,c->tx.from,&b,&old) || b.format!=2 || version_check(c,c->tx.from,&old) ||
+       current(c,cur) || (strcmp(cur,c->tx.from) && strcmp(cur,"-")) ||
+       tb_native_conflicts(c->root,&empty,&old) || mountcheck(c,&old))goto done;
+    if(!strcmp(c->tx.state,"ready")) {
+        if(strcmp(cur,c->tx.from) || secure(c,&empty,&old))goto done;
+        if(c->services && command(c,c->services,"stop"))goto done;
+        if(tb_busy(c->root,c->tx.from,&old,false)) {
+            if(c->services)command(c,c->services,"restart-old");
+            goto done;
+        }
+        if(state(c,"applying"))goto done;
+    }
+    if(strcmp(c->tx.state,"applying"))goto done;
+    /* Check the whole remaining set before changing any more destinations. */
+    for(size_t i=0;i<old.n;i++) {
+        const tb_entry_t *e=&old.v[i];
+        if(strncmp(e->path,"placed/",7) || e->type!='f')continue;
+        struct stat st;
+        int fd=tb_open_beneath(c->rootfd,e->path+7);
+        if(fd<0) {if(errno==ENOENT)continue; goto done;}
+        int ok=!fstat(fd,&st) && S_ISREG(st.st_mode); close(fd);
+        if(!ok || !matches(c->rootfd,e->path+7,e)) {
+            tb_err("detach destination changed: /%s",e->path+7); goto done;
+        }
+    }
+    for(size_t i=old.n;i>0;i--) {
+        const tb_entry_t *e=&old.v[i-1];
+        if(strncmp(e->path,"placed/",7))continue;
+        char *leaf=NULL;
+        int fd=parent(c->rootfd,e->path+7,false,&leaf);
+        if(fd<0) {free(leaf); if(errno==ENOENT)continue; goto done;}
+        int r=unlinkat(fd,leaf,e->type=='d'?AT_REMOVEDIR:0),error=errno;
+        free(leaf);
+        if(r && error!=ENOENT && !(e->type=='d' && error==ENOTEMPTY)) {close(fd); goto done;}
+        if(!r)tb_fault("detach-placed-unlink");
+        r=syncdir(fd); close(fd); if(r)goto done;
+    }
+    if(strcmp(cur,"-")) {
+        if(unlinkat(c->slot,"current",0))goto done;
+        tb_fault("detach-current-unlink");
+        if(syncdir(c->slot))goto done;
+    }
+    if(atomic(c->state,"record","format 2\n",9) || state(c,"complete") || syncall(c->slot))goto done;
+    result=TB_OK;
+done:
+    tb_bundle_free(&b); tb_manifest_free(&old);
+    return result;
+}
+static int detach(context *c,const char *expected) {
+    if(!expected || !activation_hash(expected) || !strcmp(expected,"-"))return TB_USAGE;
+    int have=readtx(c);
+    if(have<0)return TB_INTERRUPTED;
+    if(have && !strcmp(c->tx.to,"-")) {
+        tb_bundle_t old={0}; tb_manifest_t manifest={0};
+        int ok=!load(c,c->tx.from,&old,&manifest) && !strcmp(old.hash,expected);
+        tb_bundle_free(&old); tb_manifest_free(&manifest);
+        if(!ok)return TB_FAIL;
+        return !strcmp(c->tx.state,"complete")?TB_OK:detach_apply(c);
+    }
+    if(have && strcmp(c->tx.state,"complete"))return TB_INTERRUPTED;
+    char cur[256];
+    if(current(c,cur) || !strcmp(cur,"-"))return TB_FAIL;
+    tb_bundle_t old={0}; tb_manifest_t manifest={0};
+    int ok=!load(c,cur,&old,&manifest) && old.format==2 && !strcmp(old.hash,expected);
+    tb_bundle_free(&old); tb_manifest_free(&manifest);
+    if(!ok)return TB_FAIL;
+    if(have && archive_complete(c))return TB_FAIL;
+    memset(&c->tx,0,sizeof c->tx);
+    strcpy(c->tx.from,cur); strcpy(c->tx.to,"-");
+    if(prepare_uid(&c->tx.uid))return TB_FAIL;
+    unsigned char random[16];
+    if(getrandom(random,sizeof random,0)!=sizeof random)return TB_FAIL;
+    for(size_t i=0;i<sizeof random;i++)snprintf(c->tx.id+i*2,3,"%02x",random[i]);
+    if(state(c,"ready"))return TB_INTERRUPTED;
+    return detach_apply(c);
+}
+
 static int apply(context *c,bool yes) {
     int have=readtx(c);
     if(have<0)return TB_INTERRUPTED;
@@ -715,6 +871,7 @@ static int apply(context *c,bool yes) {
     return TB_INTERRUPTED;
     }
     if(!strcmp(c->tx.state,"complete"))return archive_complete(c)?TB_FAIL:TB_OK;
+    if(!strcmp(c->tx.to,"-"))return detach_apply(c);
     tb_bundle_t b={0},oldb={0};
     tb_manifest_t m={0},oldm={0};
     int r=TB_INTERRUPTED;
@@ -853,7 +1010,8 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
     (void)if_pending;
     context c={.root=root,.expected_bundle=expected_bundle,.rootfd=-1,.slot=-1,.state=-1,.lock=-1};
     int r=TB_FAIL;
-    bool prepare_cmd=!strcmp(cmd,"install") || !strcmp(cmd,"prepare") || !strcmp(cmd,"restore");
+    bool migration=!strcmp(cmd,"migrate-dormant");
+    bool prepare_cmd=migration || !strcmp(cmd,"install") || !strcmp(cmd,"prepare") || !strcmp(cmd,"restore");
     bool reading=!strcmp(cmd,"status") || !strcmp(cmd,"check");
     c.rootfd=open(root,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
     if(c.rootfd<0)goto done;
@@ -866,7 +1024,7 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
         r=arg?TB_USAGE:retained_contracts(&c,true)?TB_FAIL:TB_OK;
         goto done;
     }
-    if(reading || dry) {
+    if((reading || dry) && !migration) {
         char cur[256];
     if(current(&c,cur))goto done;
         int have=readtx(&c);
@@ -875,6 +1033,13 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
     }
         if(print_status(&c,cur))goto done;
         if(have)printf("transaction: %s\nstate: %s\nfrom: %s\nto: %s\ncapture: -\n",c.tx.id,c.tx.state,c.tx.from,c.tx.to);
+        if(have && strcmp(c.tx.to,"-") && strcmp(c.tx.state,"staging")) {
+            tb_bundle_t target={0}; tb_manifest_t manifest={0};
+            int loaded=load(&c,c.tx.to,&target,&manifest);
+            if(!loaded)printf("target-hash: %s\n",target.hash);
+            tb_bundle_free(&target); tb_manifest_free(&manifest);
+            if(loaded)goto done;
+        }
         r=have && strcmp(c.tx.state,"complete")?TB_INTERRUPTED:TB_OK;
         if(retained_contracts(&c,false) && r==TB_OK)r=TB_FAIL;
         if(!strcmp(cmd,"check") && strcmp(cur,"-")) {
@@ -894,12 +1059,18 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
             goto done;
         }
     }
+    if(migration && dry) {
+        if(!profile(&c))r=migrate_dormant(&c,arg,true);
+        goto done;
+    }
     char *statepath=tam_path_join(root,"var/lib/tamlinux/lock");
     c.lock=tam_fs_lock(statepath,5000);
     free(statepath);
     if(c.lock<0)goto done;
     if(profile(&c))goto done;
-    if(prepare_cmd) {
+    if(migration)r=migrate_dormant(&c,arg,dry);
+    else if(!strcmp(cmd,"detach"))r=detach(&c,arg);
+    else if(prepare_cmd) {
         if(!arg){r=TB_USAGE;
     goto done;
     }

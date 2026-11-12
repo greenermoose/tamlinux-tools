@@ -461,6 +461,97 @@ class ProductTransactions(unittest.TestCase):
         self.assertEqual(actions.read_text().splitlines(),['stop','restart-old'])
         self.assertEqual(self.tx()['state'],'ready')
 
+
+    def bundle_hash(self, bundle):
+        return dict(line.split(' ', 1) for line in (bundle/'BUNDLE').read_text().splitlines())['hash']
+
+    def legacy_slot(self):
+        legacy=self.base/'legacy'
+        (legacy/'bin').mkdir(parents=True)
+        (legacy/'bin/tam-demo').write_text('legacy executable')
+        self.run_tb('seal',legacy,'--name','demo','--version','legacy')
+        slot=self.root/'usr/lib/tamlinux';slot.mkdir(parents=True)
+        shutil.copytree(legacy,slot/'current')
+        (slot/'kept/previous').mkdir(parents=True)
+        (slot/'kept/previous/sentinel').write_text('older retained payload')
+        (self.root/'var/lib/tamlinux').mkdir(parents=True)
+        return self.bundle_hash(legacy)
+
+    def test_dormant_format1_is_archived_without_reinterpreting_its_identity(self):
+        digest=self.legacy_slot()
+        slot=self.root/'usr/lib/tamlinux'
+        self.tb('migrate-dormant','sha256:'+'0'*64,code=1)
+        self.assertTrue((slot/'current').is_dir())
+        self.tb('migrate-dormant',digest,'--dry-run')
+        self.assertFalse((slot/'legacy-v1').exists())
+        self.tb('migrate-dormant',digest)
+        self.tb('migrate-dormant',digest)
+        self.assertFalse((slot/'current').exists())
+        self.assertEqual((slot/'legacy-v1/current/bin/tam-demo').read_text(),'legacy executable')
+        self.assertEqual((slot/'legacy-v1/kept/previous/sentinel').read_text(),'older retained payload')
+        self.tb('install',self.a);self.tb('apply');self.assert_live(self.a)
+
+    def test_dormant_busy_or_edited_slot_refuses(self):
+        digest=self.legacy_slot();slot=self.root/'usr/lib/tamlinux'
+        with self.sleeper(argument=slot/'current/bin/tam-demo'):
+            self.tb('migrate-dormant',digest,code=1)
+        self.assertTrue((slot/'current').is_dir())
+        (slot/'current/bin/tam-demo').write_text('edited')
+        self.tb('migrate-dormant',digest,code=1)
+        self.assertFalse((slot/'legacy-v1').exists())
+
+    def test_detach_retains_the_exact_product_and_unrelated_files(self):
+        self.install_a()
+        own=self.root/'usr/bin/own-tool';own.write_text('unrelated')
+        self.tb('detach','sha256:'+'0'*64,code=1)
+        self.assert_live(self.a)
+        self.tb('detach',self.bundle_hash(self.a))
+        self.tb('detach',self.bundle_hash(self.a))
+        self.assertFalse((self.root/'usr/lib/tamlinux/current').exists())
+        self.assertFalse((self.root/'usr/bin/tam-demo').exists())
+        self.assertEqual(own.read_text(),'unrelated')
+        self.assertEqual(self.tx()['to'],'-')
+        self.assertEqual(self.tx()['state'],'complete')
+        retained=self.root/'usr/lib/tamlinux/version'/self.id(self.a)
+        self.assertEqual((retained/'.placed/usr/bin/tam-demo').read_bytes(),(self.a/'placed/usr/bin/tam-demo').read_bytes())
+        self.tb('install',self.b);self.tb('apply');self.assert_live(self.b)
+
+    def test_detach_corrupt_copy_or_live_edit_refuses_before_unlink(self):
+        self.install_a()
+        retained=self.root/'usr/lib/tamlinux/version'/self.id(self.a)/'.placed/usr/bin/tam-demo'
+        retained.write_text('corrupt rollback copy')
+        self.tb('detach',self.bundle_hash(self.a),code=4)
+        self.assertTrue((self.root/'usr/bin/tam-demo').exists())
+        retained.write_bytes((self.a/'placed/usr/bin/tam-demo').read_bytes())
+        live=self.root/'usr/bin/tam-demo';live.write_text('foreign edit')
+        self.tb('detach',self.bundle_hash(self.a),code=4)
+        self.assertEqual(live.read_text(),'foreign edit')
+        self.assertTrue((self.root/'usr/bin/tam-old').exists())
+
+    def test_migration_and_detach_fault_boundaries_retry(self):
+        for phase in ('migrate-dormant','detach'):
+            if self.root.exists():shutil.rmtree(self.root)
+            profile=self.root/'usr/share/tamlinux/rootstock';profile.mkdir(parents=True)
+            (profile/'profile').write_text('format 1\nallow usr/bin\nallow usr/share/man\n')
+            (profile/'id').write_text('arch-systemd\n')
+            db=self.root/'var/lib/pacman/local';db.mkdir(parents=True)
+            (db/'ALPM_DB_VERSION').write_text('9\n')
+            digest=self.legacy_slot() if phase=='migrate-dormant' else self.bundle_hash(self.a)
+            if phase=='detach':self.install_a()
+            baseline=self.base/('baseline-'+phase);shutil.copytree(self.root,baseline,symlinks=True)
+            trace=self.base/(phase+'.trace')
+            self.tb(phase,digest,env={'TAM_BUNDLE_TRACE':str(trace)})
+            count=len(trace.read_text().splitlines())
+            self.assertGreater(count,5)
+            for point in range(1,count+1):
+                with self.subTest(phase=phase,point=point):
+                    shutil.rmtree(self.root);shutil.copytree(baseline,self.root,symlinks=True)
+                    self.tb(phase,digest,code=99,env={'TAM_BUNDLE_FAULT_AT':str(point)})
+                    self.tb(phase,digest)
+                    self.assertFalse(os.path.lexists(self.root/'usr/lib/tamlinux/current'))
+                    self.tb('install',self.b);self.tb('apply');self.assert_live(self.b)
+            print(f'  checked {count} {phase} durable transitions')
+
     def test_every_durable_transition(self):
         self.install_a()
         baseline=self.base/'baseline';shutil.copytree(self.root,baseline,symlinks=True)

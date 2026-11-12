@@ -14,6 +14,8 @@ static const char usage_text[] =
     "Commands:\n"
     "  install <bundle>             prepare a format 2 directory or .tbundle\n"
     "  apply [--if-pending]         finish the prepared transaction before session use\n"
+    "  migrate-dormant HASH         archive the exact dormant format-1 slot\n"
+    "  detach HASH                 retain the exact product and remove its placed files\n"
     "  cancel                       disarm staging or ready work\n"
     "  pack <dir> -o FILE           make a portable format 2 archive\n"
     "  capture [-o FILE] [--save-edits]   capture settings or export a private workstation\n"
@@ -583,7 +585,7 @@ int main(int argc, char **argv) {
         struct stat st;
         if(!lstat(TB_DEFAULT_SLOT "/current",&st) && S_ISLNK(st.st_mode))o.root="/";
     }
-    if (o.root || !strcmp(cmd,"install") || !strcmp(cmd,"prepare") || !strcmp(cmd,"apply") || !strcmp(cmd,"cancel") || !strcmp(cmd,"restore") || !strcmp(cmd,"native-status")) {
+    if (o.root || !strcmp(cmd,"install") || !strcmp(cmd,"prepare") || !strcmp(cmd,"apply") || !strcmp(cmd,"cancel") || !strcmp(cmd,"restore") || !strcmp(cmd,"native-status") || !strcmp(cmd,"migrate-dormant") || !strcmp(cmd,"detach")) {
         if (o.nargs > 2) return usage("too many transaction arguments");
         return tb_v2_main(o.root ? o.root : "/", cmd, o.nargs==2 ? o.args[1] : NULL, o.sw.dry_run, o.if_pending, o.yes,o.expected_bundle);
     }
