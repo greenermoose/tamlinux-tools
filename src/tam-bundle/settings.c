@@ -155,7 +155,24 @@ static void shash(const void *data,size_t n,char out[TB_HASH_LEN+1]) {
     tam_sha256_init(&ctx); tam_sha256_update(&ctx,data,n); tam_sha256_final(&ctx,d);
     memcpy(out,"sha256:",7); tam_sha256_hex(d,out+7);
 }
+static bool portable_state_path(const char *path) {
+    static const char *const exact[]={
+        ".local/state/tamlinux/shell.toml",
+        ".local/state/tamlinux/current/theme.name",
+        ".local/state/tamlinux/current/background.selection",
+        ".local/state/tamlinux/defaults/editor",
+        ".local/state/tamlinux/settings/weather.json",
+        ".local/state/tamlinux/settings/tides.json",
+        ".local/state/tamlinux/desktop-mode",
+    };
+    for(size_t i=0;i<sizeof exact/sizeof *exact;i++)if(!strcmp(path,exact[i]))return true;
+    return !strcmp(path,".local/state/tamlinux/toggles") ||
+           !strncmp(path,".local/state/tamlinux/toggles/",30) ||
+           !strcmp(path,".local/state/tamlinux/workspace-layouts") ||
+           !strncmp(path,".local/state/tamlinux/workspace-layouts/",40);
+}
 static bool secret_path(const char *path) {
+    if(portable_state_path(path))return false;
     const char *paths[]={".ssh",".gnupg",".codex",".gemini",".local/share/keyrings",
                          ".config/gh/hosts.yml",".claude/.credentials.json",".claude/credentials.json",
                          ".local/state/tamlinux"};
@@ -165,7 +182,25 @@ static bool secret_path(const char *path) {
     }
     return false;
 }
-static size_t secret_line(const char *data,size_t n) {
+static bool binary_image_asset(const char *path,const char *data,size_t n) {
+    bool in_dir=!strncmp(path,".config/tamlinux/backgrounds/",29) ||
+        (!strncmp(path,".config/tamlinux/themes/",24) && strstr(path+24,"/backgrounds/"));
+    const char *dot=in_dir?strrchr(path,'.'):NULL;
+    if(!dot || strchr(dot,'/'))return false;
+    char ext[8]; size_t i=0;
+    for(;dot[i] && i<sizeof ext-1;i++)ext[i]=(char)tolower((unsigned char)dot[i]);
+    if(dot[i])return false;
+    ext[i]=0;
+    const unsigned char *u=(const unsigned char *)data;
+    if(!strcmp(ext,".jpg") || !strcmp(ext,".jpeg"))return n>=3 && u[0]==0xff && u[1]==0xd8 && u[2]==0xff;
+    if(!strcmp(ext,".png"))return n>=8 && !memcmp(u,"\x89PNG\r\n\x1a\n",8);
+    if(!strcmp(ext,".gif"))return n>=6 && (!memcmp(u,"GIF87a",6) || !memcmp(u,"GIF89a",6));
+    if(!strcmp(ext,".webp"))return n>=12 && !memcmp(u,"RIFF",4) && !memcmp(u+8,"WEBPVP8",7);
+    if(!strcmp(ext,".avif"))return n>=12 && !memcmp(u+4,"ftyp",4) && (!memcmp(u+8,"avif",4) || !memcmp(u+8,"avis",4));
+    return false;
+}
+static size_t secret_line_for(const char *path,const char *data,size_t n) {
+    if(path && binary_image_asset(path,data,n))return 0;
     const char *patterns[]={"-----BEGIN PRIVATE KEY-----","-----BEGIN RSA PRIVATE KEY-----",
         "-----BEGIN OPENSSH PRIVATE KEY-----","-----BEGIN EC PRIVATE KEY-----",
         "ghp_","gho_","ghu_","ghs_","ghr_","github_pat_","sk-","xoxb-","xoxp-","xapp-","AKIA","ASIA"};
@@ -381,7 +416,7 @@ static int snapshot(user_settings *u,char id[256]) {
         char *data=NULL; size_t len=0; const char *reason="-";
         int presence=sread(u->home,e->path,&data,&len,&e->mode,&reason);
         if(presence<0)goto done;
-        e->line=presence==0?secret_line(data,len):0;
+        e->line=presence==0?secret_line_for(e->path,data,len):0;
         if(e->line){presence=2; reason="secret-pattern";}
         e->presence=strdup(presence==0?"present":presence==1?"absent":"excluded");
         e->base=strdup(u->productid); e->reason=strdup(reason);
@@ -841,7 +876,7 @@ static int compute_changes(user_settings *u,const char *root,settings_tx *t,int 
             char *current=NULL,*side=NULL; size_t cn=0,sn=0; unsigned cm=0,sm=0; const char *why="-";
             int cp=sread(u->home,u->files.v[i].path,&current,&cn,&cm,&why);
             int sp=path?sread(u->home,path,&side,&sn,&sm,&why):-1;
-            if(cp==0 && sp==0 && !secret_line(side,sn) && same_bytes(current,cn,cm,side,sn,sm) &&
+            if(cp==0 && sp==0 && !secret_line_for(path,side,sn) && same_bytes(current,cn,cm,side,sn,sm) &&
                !find_setting(&u->files,path)) {
                 char *mark=strdup(u->files.v[i].mark);
                 setting *e=mark?sadd(&u->files,path,mark):NULL; free(mark);
@@ -893,7 +928,7 @@ static int compute_changes(user_settings *u,const char *root,settings_tx *t,int 
             else if(changed && np==0)side=true;
             else if(np==1)tb_note("edited settings kept after default removal: %s",e->path);
         }
-        if((write || side) && secret_line(newdata,nn)) {
+        if((write || side) && secret_line_for(e->path,newdata,nn)) {
             tb_note("new settings excluded: %s (secret-pattern)",e->path); write=side=false;
         }
         int r=0;
@@ -1555,7 +1590,7 @@ int tb_settings_diff(const char *root,const char *path) {
         if(fd>=0)close(fd);
     }
     for(size_t i=0;i<3;i++)if(present[i]<0 || present[i]==2 ||
-        (present[i]==0 && (secret_line(contents[i],lengths[i]) || memchr(contents[i],0,lengths[i]))))goto done;
+        (present[i]==0 && (secret_line_for(path,contents[i],lengths[i]) || memchr(contents[i],0,lengths[i]))))goto done;
     printf("user: %s\n%s\nbase: %s\n%s\nnew default: %s\n%s\n",path,
         present[0]==1?"(absent)":contents[0],from,present[1]==1?"(absent)":contents[1],
         to,present[2]==1?"(absent)":contents[2]); result=TB_OK;

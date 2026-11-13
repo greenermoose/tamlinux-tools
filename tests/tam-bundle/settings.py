@@ -668,6 +668,92 @@ class UserSettings(unittest.TestCase):
                 self.run_tb('verify',archive,code=1); self.tb('import-settings',archive,code=1)
                 self.assertEqual((self.home/'.bashrc').read_text(),'safe')
 
+    def test_portable_state_allowlist_and_image_assets(self):
+        (self.b / 'SETTINGS').write_text('format 1\n'
+            'common .config/tamlinux/backgrounds/\n'
+            'common .local/state/tamlinux/shell.toml\n'
+            'common .local/state/tamlinux/current/theme.name\n'
+            'common .local/state/tamlinux/current/background.selection\n'
+            'common .local/state/tamlinux/defaults/editor\n'
+            'common .local/state/tamlinux/settings/weather.json\n'
+            'common .local/state/tamlinux/settings/tides.json\n'
+            'common .local/state/tamlinux/toggles/\n'
+            'host .local/state/tamlinux/desktop-mode\n'
+            'host .local/state/tamlinux/toggles/hypr/\n'
+            'common .local/state/tamlinux/workspace-layouts/\n'
+            'common .local/state/tamlinux/theme-generations/tokyo/a.txt\n'
+            'common .local/state/tamlinux/current/theme/colors.toml\n'
+            'common .local/state/tamlinux/current/background\n'
+            'common .local/state/tamlinux/protocol-shadow/evidence.sqlite3\n')
+        (self.b / 'BUNDLE').unlink(); (self.b / 'MANIFEST').unlink()
+        self.run_tb('seal', self.b, '--format', '2', '--name', 'demo', '--version', 'b')
+        self.tb('install', self.b)
+        self.tb('apply')
+        portable={
+            '.local/state/tamlinux/shell.toml':'[font]\nbase-size = 12\n',
+            '.local/state/tamlinux/current/theme.name':'tokyo-night\n',
+            '.local/state/tamlinux/current/background.selection':'{"format":1,"kind":"theme","theme":"tokyo-night","file":"0.jpg"}\n',
+            '.local/state/tamlinux/defaults/editor':'helix\n',
+            '.local/state/tamlinux/settings/weather.json':'{"city":"Boston"}\n',
+            '.local/state/tamlinux/settings/tides.json':'{"station":"8443970"}\n',
+            '.local/state/tamlinux/toggles/bar-off':'1\n',
+            '.local/state/tamlinux/desktop-mode':'auto\n',
+            '.local/state/tamlinux/toggles/hypr/touchpad-disabled-name':'tp0\n',
+            '.local/state/tamlinux/workspace-layouts/1.lua':'hl.workspace_rule({})\n',
+        }
+        for rel,body in portable.items():self.write(rel,body)
+        # Blocked internal/derived state paths stay excluded even if listed.
+        self.write('.local/state/tamlinux/theme-generations/tokyo/a.txt','leak')
+        self.write('.local/state/tamlinux/current/theme/colors.toml','generated')
+        self.write('.local/state/tamlinux/protocol-shadow/evidence.sqlite3','db')
+        (self.home/'.local/state/tamlinux/current/background').symlink_to(self.home/'.local/state/tamlinux/theme-generations/tokyo/a.txt')
+        # Valid PNG/JPEG bytes containing compressed tokens survive; spoofed text secret fails.
+        png=self.home/'.config/tamlinux/backgrounds/tokyo-night/1.png'
+        png.parent.mkdir(parents=True,exist_ok=True)
+        png.write_bytes(b'\x89PNG\r\n\x1a\nsk-compressed\x00token=1\n')
+        spoof=self.home/'.config/tamlinux/backgrounds/tokyo-night/fake.jpg'
+        spoof.write_text('not-an-image\ntoken=real-secret\n')
+        cap, _ = self.capture()
+        records = {f[-1]: f for line in (cap / 'FILES').read_text().splitlines()[1:] if (f := shlex.split(line))}
+        for rel in portable:
+            self.assertEqual(records[rel][1], 'present')
+        for blocked in ('.local/state/tamlinux/theme-generations/tokyo/a.txt',
+                        '.local/state/tamlinux/current/theme/colors.toml',
+                        '.local/state/tamlinux/current/background',
+                        '.local/state/tamlinux/protocol-shadow/evidence.sqlite3'):
+            self.assertEqual(records[blocked][1], 'excluded')
+            self.assertIn('secret-path', records[blocked])
+        self.assertEqual(records['.config/tamlinux/backgrounds/tokyo-night/1.png'][1], 'present')
+        self.assertEqual(records['.config/tamlinux/backgrounds/tokyo-night/fake.jpg'][1], 'excluded')
+        self.assertIn('secret-pattern', records['.config/tamlinux/backgrounds/tokyo-night/fake.jpg'])
+        spoof.unlink()
+        archive = self.base / 'ux-export.tbundle'
+        self.tb('capture', '-o', archive)
+        # Cross-machine import preserves common state and keeps destination host entries.
+        self.home = self.base / 'target-home'; self.home.mkdir()
+        self.write('.local/state/tamlinux/shell.toml', '[font]\nbase-size = 9\n')
+        self.write('.local/state/tamlinux/desktop-mode', 'host-override\n')
+        self.write('.local/state/tamlinux/toggles/hypr/touchpad-disabled-name', 'local-tp\n')
+        (self.root / 'var/lib/tamlinux/host-id').write_text('sha256:' + 'f' * 64 + '\n')
+        self.tb('import-settings', archive)
+        imported_capture = next((self.state / 'captures').iterdir())
+        self.tb('restore-settings', imported_capture.name)
+        self.tb('apply-settings')
+        self.tb('session-ready')
+        self.assertEqual((self.home / '.local/state/tamlinux/shell.toml').read_text(), portable['.local/state/tamlinux/shell.toml'])
+        self.assertEqual((self.home / '.local/state/tamlinux/current/theme.name').read_text(), 'tokyo-night\n')
+        self.assertEqual((self.home / '.local/state/tamlinux/workspace-layouts/1.lua').read_text(), 'hl.workspace_rule({})\n')
+        self.assertEqual((self.home / '.config/tamlinux/backgrounds/tokyo-night/1.png').read_bytes(), b'\x89PNG\r\n\x1a\nsk-compressed\x00token=1\n')
+        self.assertEqual((self.home / '.local/state/tamlinux/desktop-mode').read_text(), 'host-override\n')
+        self.assertEqual((self.home / '.local/state/tamlinux/toggles/hypr/touchpad-disabled-name').read_text(), 'local-tp\n')
+        # Symlink in an allowlisted path is refused by O_NOFOLLOW without reading target.
+        (self.home / '.local/state/tamlinux/defaults/editor').unlink()
+        (self.home / '.local/state/tamlinux/defaults/editor').symlink_to('/etc/hostname')
+        link_cap, _ = self.capture()
+        link_records = {f[-1]: f for line in (link_cap / 'FILES').read_text().splitlines()[1:] if (f := shlex.split(line))}
+        self.assertEqual(link_records['.local/state/tamlinux/defaults/editor'][1], 'excluded')
+        self.assertIn('unreadable-or-link', link_records['.local/state/tamlinux/defaults/editor'])
+
 
 if __name__=='__main__':
     enter_namespace(__file__)
