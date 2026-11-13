@@ -754,6 +754,39 @@ class UserSettings(unittest.TestCase):
         self.assertEqual(link_records['.local/state/tamlinux/defaults/editor'][1], 'excluded')
         self.assertIn('unreadable-or-link', link_records['.local/state/tamlinux/defaults/editor'])
 
+    def test_toggles_common_and_hypr_host_overlap_precedence(self):
+        # Workstation SETTINGS lists common .local/state/tamlinux/toggles/
+        # before host .local/state/tamlinux/toggles/hypr/; last rule must win
+        # for hypr/ files while sibling toggles stay common.
+        lines = [
+            'format 1',
+            'common .local/state/tamlinux/toggles/',
+            'host .local/state/tamlinux/toggles/hypr/',
+        ]
+        settings = '\n'.join(lines) + '\n'
+        (self.b / 'SETTINGS').write_text(settings)
+        (self.b / 'BUNDLE').unlink(); (self.b / 'MANIFEST').unlink()
+        self.run_tb('seal', self.b, '--format', '2', '--name', 'demo', '--version', 'b')
+        self.tb('install', self.b); self.tb('apply')
+        self.write('.local/state/tamlinux/toggles/bar-off', '1\n')
+        self.write('.local/state/tamlinux/toggles/hypr/touchpad-disabled-name', 'source-tp\n')
+        cap, _ = self.capture()
+        records = {f[-1]: f for line in (cap / 'FILES').read_text().splitlines()[1:] if (f := shlex.split(line))}
+        self.assertEqual(records['.local/state/tamlinux/toggles/bar-off'][:2], ['common', 'present'])
+        self.assertEqual(records['.local/state/tamlinux/toggles/hypr/touchpad-disabled-name'][:2], ['host', 'present'])
+        archive = self.base / 'toggles-overlap.tbundle'
+        self.tb('capture', '-o', archive)
+        self.home = self.base / 'other-host-home'; self.home.mkdir()
+        self.write('.local/state/tamlinux/toggles/bar-off', '0\n')
+        self.write('.local/state/tamlinux/toggles/hypr/touchpad-disabled-name', 'target-tp\n')
+        (self.root / 'var/lib/tamlinux/host-id').write_text('sha256:' + 'e' * 64 + '\n')
+        self.tb('import-settings', archive)
+        imported = next((self.state / 'captures').iterdir())
+        self.tb('restore-settings', imported.name)
+        self.tb('apply-settings'); self.tb('session-ready')
+        self.assertEqual((self.home / '.local/state/tamlinux/toggles/bar-off').read_text(), '1\n')
+        self.assertEqual((self.home / '.local/state/tamlinux/toggles/hypr/touchpad-disabled-name').read_text(), 'target-tp\n')
+
 
 if __name__=='__main__':
     enter_namespace(__file__)
