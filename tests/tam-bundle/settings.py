@@ -107,11 +107,26 @@ class UserSettings(unittest.TestCase):
         self.assertFalse((self.home/'.config/dropped').exists())
         self.assertEqual((self.home/'.config/edited').read_text(),'do not change excluded')
         self.tb('session-ready')
+
         self.write('.bashrc','other'); self.write('.config/monitor','target monitor')
         (self.root/'var/lib/tamlinux/host-id').write_text('sha256:'+'b'*64+'\n')
         self.tb('restore-settings',capture.name); self.tb('apply-settings')
         self.assertEqual((self.home/'.bashrc').read_text(),'captured')
         self.assertEqual((self.home/'.config/monitor').read_text(),'target monitor')
+
+    def test_canceled_settings_record_checks_identity_and_all_durable_events(self):
+        self.tb('prepare-settings');self.tb('apply-settings')
+        self.tb('install',self.b);self.tb('prepare-settings');self.tb('cancel')
+        prior=self.state/'last-transaction';saved=prior.read_bytes()
+        prior.write_bytes(saved.replace(b'state complete',b'state applying'))
+        self.tb('cancel-settings',code=4)
+        prior.write_bytes(saved)
+        baseline=self.base/'canceled-settings';shutil.copytree(self.home,baseline)
+        def check(point):
+            self.tb('cancel-settings',code=99,env={'TAM_BUNDLE_FAULT_AT':str(point)})
+            self.tb('cancel-settings');self.tb('session-ready')
+            self.assertEqual((self.state/'transaction').read_bytes(),saved)
+        self.enumerate_faults('cancel-settings',('cancel-settings',),baseline,check)
 
     def test_upgrade_computes_at_switch_and_captures_current_state(self):
         for files in self.config.values():
@@ -193,6 +208,21 @@ class UserSettings(unittest.TestCase):
         self.tb('apply-settings');self.tb('session-ready')
         before=transaction.read_bytes();self.tb('prepare-settings')
         self.assertEqual(transaction.read_bytes(),before)
+
+    def test_cancel_prepared_settings_requires_exact_completed_system_and_retries(self):
+        self.tb('prepare-settings');self.tb('apply-settings')
+        before=(self.state/'transaction').read_bytes()
+        self.write('.bashrc','edited before canceled update\n')
+        self.tb('install',self.b);self.tb('prepare-settings')
+        self.tb('cancel-settings',code=4)
+        self.tb('cancel')
+        self.tb('session-ready',code=4)
+        self.tb('cancel-settings',code=99,env={'TAM_BUNDLE_FAULT':'settings-cancel-restored'})
+        self.tb('cancel-settings');self.tb('session-ready')
+        self.assertEqual((self.state/'transaction').read_bytes(),before)
+        self.assertEqual((self.home/'.bashrc').read_text(),'edited before canceled update\n')
+        self.tb('install',self.b);self.tb('prepare-settings');self.tb('apply');self.tb('apply-settings')
+        self.tb('session-ready')
 
     def test_first_install_recovers_missing_user_plan_after_system_apply(self):
         self.fresh_root();self.tb('install',self.b);self.tb('apply')

@@ -161,6 +161,12 @@ plan restoration; otherwise plan an upgrade using old and new defaults.
 Actual home files are read and automatically captured when apply-settings
 runs, so edits after prepare are preserved.
 .TP
+.B cancel-settings
+After cancel has restored the completed system, restore its exact retained
+completed user record. Only an untouched ready plan may be abandoned.
+Applying settings, missing retained records and foreign identities refuse.
+No home settings are changed. Retrying after the durable record write is safe.
+.TP
 .BI restore-settings " capture-id"
 Plan restoration of settings onto the current product. Settings and
 software from different products produce a warning. Common settings apply

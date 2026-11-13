@@ -1,5 +1,7 @@
 # AI Collaboration & Provenance
 
+2026-11-12: Codex CLI `0.167.2` (`gpt-6.1-sol`) — Restore readiness after canceled updates. [Record](docs/ai/2026-11-12-settings-cancellation.md).
+
 2026-11-11: Codex CLI `0.167.1` (`gpt-6.1-sol`) implements dormant-slot archival, exact product detachment and settings preparation recovery. [Record](docs/ai/2026-11-11-bundle-migration.md).
 
 2026-11-11: Codex CLI `0.167.1` (`gpt-6.1-sol`) — daily plain text journal. [Record](docs/ai/2026-11-11-plain-text-journal.md).

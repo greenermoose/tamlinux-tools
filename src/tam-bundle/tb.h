@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-#define TB_VERSION "0.12.0"
+#define TB_VERSION "0.13.0"
 #define TB_FORMAT 2               /* newest record format this program reads */
 #define TB_DEFAULT_SLOT "/usr/lib/tamlinux"
 #define TB_SYSTEM_STATE "/var/lib/tam-bundle"

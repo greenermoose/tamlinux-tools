@@ -21,6 +21,7 @@ static const char usage_text[] =
     "  capture [-o FILE] [--save-edits]   capture settings or export a private workstation\n"
     "  import-settings FILE        retain a transferred workstation's private capture\n"
     "  prepare-settings [CAPTURE]  plan settings for the prepared product transaction\n"
+    "  cancel-settings             restore user readiness after system cancellation\n"
     "  restore-settings CAPTURE    plan a settings-only restoration\n"
     "  apply-settings              capture current settings and finish the user's switch\n"
     "  session-ready               require agreement of complete system/user transactions\n"
@@ -558,7 +559,7 @@ int main(int argc, char **argv) {
     }
 
     if(!strcmp(cmd,"capture") || !strcmp(cmd,"prepare-settings") || !strcmp(cmd,"restore-settings") ||
-       !strcmp(cmd,"apply-settings") || !strcmp(cmd,"session-ready") || !strcmp(cmd,"session-activate")) {
+       !strcmp(cmd,"apply-settings") || !strcmp(cmd,"cancel-settings") || !strcmp(cmd,"session-ready") || !strcmp(cmd,"session-activate")) {
         if(!strcmp(cmd,"capture") && o.nargs==1 && o.output)
             return tb_settings_export(o.root?o.root:"/",o.output,o.sw.save_edits);
         bool capture_arg=!strcmp(cmd,"prepare-settings") || !strcmp(cmd,"restore-settings");

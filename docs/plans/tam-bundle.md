@@ -1770,3 +1770,14 @@ active user; the Void profile is a shape in this design, not yet built.
   versions. The product's own systemd files (user services, logind and
   sleep hooks, zram, tmpfiles, `environment.d`) need runit equivalents in a
   runit-built cultivar; that is product porting, not tam-bundle work.
+
+## Source continuation: canceled user plans
+
+Tool 0.13.0 adds `cancel-settings` for the delivery coordinator. After root
+`cancel` restores the completed system, this user command restores its exact
+retained completed user record. It requires an untouched ready user plan and
+matching system, user, product and completion identities. An applying user
+transaction, missing/corrupt retained record or foreign identity refuses.
+No home settings change. The durable record write is idempotent and covered
+at each fault event; later delivery is checked after recovery. This is source
+verification only. Bootstrap selection and native installation remain separate.

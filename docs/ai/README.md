@@ -1,5 +1,7 @@
 # AI collaboration session archive: `tamlinux-tools`
 
+- [2026-11-12 — Restore readiness after canceled updates](2026-11-12-settings-cancellation.md)
+
 - [2026-11-11 — Dormant slot migration and exact product detachment](2026-11-11-bundle-migration.md)
 
 Session records for AI-assisted work in this repository: date, tool and

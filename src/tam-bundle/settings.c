@@ -1250,6 +1250,25 @@ static int session_activate(user_settings *u,const char *root) {
     if(!result && strcmp(u->productid,sys.to) && set_product(u,root,sys.to))return TB_INTERRUPTED;
     return result?result:session_ready(u,root);
 }
+static int settings_cancel(user_settings *u,const char *root) {
+    settings_tx current,previous;
+    system_tx sys;
+    if(tx_read(u->state,&current)!=1 || system_read(root,&sys))return TB_INTERRUPTED;
+    if(!strcmp(current.state,"complete") && agrees(u,&sys,&current))return TB_OK;
+    /* Only an untouched user plan can be abandoned. The completed system
+     * must already identify its exact retained user record. Never undo an
+     * applying settings transaction or infer the old record from filenames. */
+    if(strcmp(current.state,"ready") || strcmp(current.from,u->productid) ||
+       tx_read_record(u->state,"last-transaction",&previous)!=1 ||
+       strcmp(previous.state,"complete") || !agrees(u,&sys,&previous))return TB_INTERRUPTED;
+    size_t n=0;
+    char *text=metadata(u->state,"last-transaction",&n,4096);
+    int r=text?swrite(u->state,"transaction",text,n,0600):-1;
+    free(text);
+    if(!r)tb_fault("settings-cancel-restored");
+    return r?TB_INTERRUPTED:TB_OK;
+}
+
 int tb_settings_main(const char *root,const char *command,const char *arg) {
     user_settings u; int result=TB_FAIL;
     bool initial=!strcmp(command,"prepare-settings") || !strcmp(command,"session-activate") ||
@@ -1261,6 +1280,7 @@ int tb_settings_main(const char *root,const char *command,const char *arg) {
     if(!strcmp(command,"capture")) {
         char id[256]; result=snapshot(&u,id)?TB_FAIL:TB_OK;
     } else if(!strcmp(command,"prepare-settings"))result=settings_plan(&u,root,arg,false);
+    else if(!strcmp(command,"cancel-settings"))result=settings_cancel(&u,root);
     else if(!strcmp(command,"restore-settings"))result=arg?settings_plan(&u,root,arg,true):TB_USAGE;
     else if(!strcmp(command,"apply-settings"))result=settings_apply(&u,root);
     else if(!strcmp(command,"session-activate"))result=session_activate(&u,root);
