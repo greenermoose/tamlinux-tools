@@ -1,5 +1,7 @@
 # AI Collaboration & Provenance
 
+2026-11-14: Antigravity CLI (`agy`) `1.5.9` — Accept `SUDO_UID` in `tam-bundle` `prepare_uid` and fix CWD-relative `/tmp` temp cleanup via `tb_remove_path`. [Record](docs/ai/2026-11-14-tam-bundle-sudo-uid-and-tmp-cleanup.md).
+
 2026-11-13: Codex CLI `0.169.0` (`gpt-6.1-sol`) converts tracked README files to plain text and updates their consumers. [Record](docs/ai/2026-11-13-plain-readmes.md).
 
 2026-11-13: Antigravity CLI (`agy`) `1.5.8` — Verify overlapping `toggles/` vs `toggles/hypr/` `SETTINGS` precedence and run the full `tamlinux-tools` suite. [Record](docs/ai/2026-11-13-toggles-overlap-test.md).

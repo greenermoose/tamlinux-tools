@@ -151,7 +151,7 @@ static int cmd_verify(const opts_t *o) {
         char temp[]="/tmp/tam-bundle-verify-XXXXXX";
         if(!mkdtemp(temp))return TB_FAIL;
         int r=tb_archive_unpack(o->args[1],temp)?TB_FAIL:tb_v2_verify(temp);
-        if(tb_remove_at(AT_FDCWD,"/",temp+1))r=TB_FAIL;
+        if(tb_remove_path(temp))r=TB_FAIL;
         return r;
     }
     tb_bundle_t b;
@@ -181,7 +181,7 @@ static int cmd_needs(const opts_t *o) {
         int result=TB_FAIL;
         if(!tb_archive_unpack(o->args[1],temp) && !tb_v2_verify(temp))
             result=cmd_needs(&extracted);
-        if(tb_remove_at(AT_FDCWD,"/",temp+1))result=TB_FAIL;
+        if(tb_remove_path(temp))result=TB_FAIL;
         return result;
     }
     tb_bundle_t b;

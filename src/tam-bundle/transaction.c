@@ -55,9 +55,15 @@ static bool uid_number(const char *text,unsigned long *uid) {
 }
 static int prepare_uid(unsigned long *uid) {
     *uid=getuid();
-    const char *caller=*uid==0?getenv("PKEXEC_UID"):NULL;
+    if(*uid!=0)return 0;
+    const char *env="PKEXEC_UID";
+    const char *caller=getenv(env);
+    if(!caller) {
+        env="SUDO_UID";
+        caller=getenv(env);
+    }
     if(caller && !uid_number(caller,uid)) {
-        tb_err("invalid invoking user in PKEXEC_UID");
+        tb_err("invalid invoking user in %s",env);
         return -1;
     }
     return 0;
@@ -1095,7 +1101,7 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
             char *dest=tam_path_join(temp,"incoming");
             if(ok && fd>=0 && !tb_archive_unpack(incoming,dest))r=prepare(&c,dest);
             if(private>=0)close(private);
-            tb_remove_at(AT_FDCWD,"/",temp+1);
+            tb_remove_path(temp);
     free(incoming);
     free(dest);
         }

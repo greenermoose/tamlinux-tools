@@ -1518,7 +1518,7 @@ int tb_settings_export(const char *root,const char *output,bool save_edits) {
     tb_note("private workstation bundle: %s; contains personal settings",output); result=TB_OK;
 done:
     if(dest>=0)close(dest);
-    tb_remove_at(AT_FDCWD,"/",temp+1); free(temp); tam_fs_unlock(lock); user_close(&u); return result;
+    tb_remove_path(temp); free(temp); tam_fs_unlock(lock); user_close(&u); return result;
 }
 int tb_settings_import(const char *root,const char *archive) {
     user_settings u; int result=TB_FAIL;
@@ -1566,7 +1566,7 @@ int tb_settings_import(const char *root,const char *archive) {
 done:
     if(cap>=0)close(cap);
     free(capture); sfree(&s); capture_free(&h); tb_manifest_free(&m);
-    tb_remove_at(AT_FDCWD,"/",temp+1); free(temp); tam_fs_unlock(lock); user_close(&u); return result;
+    tb_remove_path(temp); free(temp); tam_fs_unlock(lock); user_close(&u); return result;
 }
 int tb_settings_diff(const char *root,const char *path) {
     if(!tam_path_is_safe_rel(path) || secret_path(path))return TB_USAGE;

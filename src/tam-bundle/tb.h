@@ -153,6 +153,8 @@ char *tb_state_path(const tb_slot_t *s, const char *leaf); /* caller frees */
 int  tb_remove_tree(const tb_slot_t *s, const char *rel);
 /* The same for `rel` under any directory: `basefd` open on `base`. */
 int  tb_remove_at(int basefd, const char *base, const char *rel);
+/* Remove an arbitrary directory tree (absolute or relative to CWD). */
+int  tb_remove_path(const char *path);
 
 int  tb_intent_read(const tb_slot_t *s, tb_intent_t *it); /* 1 present, 0 none, -1 error */
 int  tb_intent_write(const tb_slot_t *s, const tb_intent_t *it);

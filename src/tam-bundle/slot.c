@@ -436,3 +436,18 @@ int tb_remove_at(int basefd, const char *base, const char *rel) {
 int tb_remove_tree(const tb_slot_t *s, const char *rel) {
     return tb_remove_at(s->fd, s->dir, rel);
 }
+
+int tb_remove_path(const char *path) {
+    if (!path || !*path) return 0;
+    if (path[0] != '/') return tb_remove_at(AT_FDCWD, ".", path);
+    const char *rel = path;
+    while (*rel == '/') rel++;
+    if (!*rel) { errno = EBUSY; return -1; }
+    int root = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (root < 0) return -1;
+    int r = tb_remove_at(root, "/", rel);
+    int saved = errno;
+    close(root);
+    errno = saved;
+    return r;
+}

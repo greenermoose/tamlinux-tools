@@ -37,9 +37,9 @@ class ProductTransactions(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def run_tb(self, *args, code=0, env=None):
+    def run_tb(self, *args, code=0, env=None, cwd=None):
         r = subprocess.run([str(BIN), *map(str, args)], capture_output=True, text=True,
-                           env=dict(os.environ, **(env or {})), timeout=30)
+                           env=dict(os.environ, **(env or {})), cwd=cwd, timeout=30)
         self.assertIn(r.returncode, (code,) if isinstance(code, int) else code,
                       f'{args}: {r.returncode}\n{r.stdout}\n{r.stderr}')
         self.assertNotIn('ERROR: AddressSanitizer', r.stderr)
@@ -113,15 +113,24 @@ class ProductTransactions(unittest.TestCase):
 
     def test_privileged_prepare_records_the_invoking_user(self):
         self.assertEqual(os.getuid(),0)  # mapped root inside the required namespace
+        for var in ('PKEXEC_UID','SUDO_UID'):
+            for invalid in ('-1','4294967295','1000 extra'):
+                with self.subTest(var=var,invalid=invalid):
+                    env={'PKEXEC_UID':invalid} if var=='PKEXEC_UID' else {'SUDO_UID':invalid}
+                    r=self.tb('install',self.b,code=1,env=env)
+                    self.assertIn(f'invalid invoking user in {var}',r.stderr)
+                    self.assertIsNone(self.tx())
         self.tb('install',self.a,env={'PKEXEC_UID':'1000'})
         self.assertEqual(self.tx()['uid'],'1000')
-        for invalid in ('-1','4294967295','1000 extra'):
-            with self.subTest(invalid=invalid):
-                r=self.tb('install',self.b,code=1,env={'PKEXEC_UID':invalid})
-                self.assertIn('invalid invoking user',r.stderr)
-                self.assertEqual(self.tx()['to'],self.id(self.a))
         self.tb('apply')
         self.assertEqual(self.tx()['uid'],'1000')
+        self.tb('install',self.b,env={'SUDO_UID':'1000'})
+        self.assertEqual(self.tx()['uid'],'1000')
+        self.tb('apply')
+        self.assertEqual(self.tx()['uid'],'1000')
+        self.tb('install',self.a,env={'PKEXEC_UID':'1001','SUDO_UID':'1000'})
+        self.assertEqual(self.tx()['uid'],'1001')
+        self.tb('cancel')
 
     def test_prepare_is_bound_to_the_selected_full_bundle_hash(self):
         metadata=dict(line.split(' ',1) for line in (self.a/'BUNDLE').read_text().splitlines())
@@ -187,6 +196,25 @@ class ProductTransactions(unittest.TestCase):
         self.run_tb('verify',evil,code=1)
         self.assertFalse((self.base/'escape').exists())
         self.assert_live(self.a)
+
+    def test_archive_temp_cleanup_when_cwd_is_not_root(self):
+        prefixes=('tam-bundle-verify-','tam-bundle-needs-','tam-bundle-import-')
+        def leftovers():
+            return {p.name for p in Path('/tmp').iterdir() if p.name.startswith(prefixes)}
+        before=leftovers()
+        archive=self.base/'bundle.tbundle'
+        self.run_tb('pack',self.a,'-o',archive,cwd=self.base)
+        self.run_tb('verify',archive,cwd=self.base)
+        self.run_tb('needs',archive,'--root',self.root,cwd=self.base)
+        self.tb('install',archive,cwd=self.base)
+        self.tb('apply',cwd=self.base)
+        self.assert_live(self.a)
+        evil=self.base/'evil.tbundle'
+        with tarfile.open(evil,'w',format=tarfile.PAX_FORMAT) as t:
+            info=tarfile.TarInfo('../escape');info.size=3;t.addfile(info,io.BytesIO(b'bad'))
+        self.run_tb('verify',evil,code=1,cwd=self.base)
+        self.tb('install',evil,code=1,cwd=self.base)
+        self.assertEqual(leftovers()-before,set())
 
     def test_unowned_collision_and_symlink_parent(self):
         p=self.root/'usr/bin';p.mkdir();(p/'tam-demo').write_text('foreign')
