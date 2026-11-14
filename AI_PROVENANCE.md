@@ -1,5 +1,7 @@
 # AI Collaboration & Provenance
 
+2026-11-13: Codex CLI `0.169.0` (`gpt-6.1-sol`) converts tracked README files to plain text and updates their consumers. [Record](docs/ai/2026-11-13-plain-readmes.md).
+
 2026-11-13: Antigravity CLI (`agy`) `1.5.8` — Verify overlapping `toggles/` vs `toggles/hypr/` `SETTINGS` precedence and run the full `tamlinux-tools` suite. [Record](docs/ai/2026-11-13-toggles-overlap-test.md).
 
 2026-11-12: Codex CLI `0.167.2` (`gpt-6.1-sol`) — Restore readiness after canceled updates. [Record](docs/ai/2026-11-12-settings-cancellation.md).
