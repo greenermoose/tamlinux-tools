@@ -583,9 +583,8 @@ static int prepare(context *c,const char *source) {
     if(prepare_uid(&uid))return TB_FAIL;
     int have=readtx(c);
     if(have<0)return TB_INTERRUPTED;
-    if(have && !strcmp(c->tx.state,"complete")){if(archive_complete(c))return TB_FAIL;
-    have=0;
-    }
+    bool completed=have && !strcmp(c->tx.state,"complete");
+    if(completed)have=0;
     if(have && strcmp(c->tx.state,"ready") && strcmp(c->tx.state,"staging")){tb_err("finish the pending apply first");
     return TB_INTERRUPTED;
     }
@@ -612,6 +611,9 @@ static int prepare(context *c,const char *source) {
     if(strcmp(c->tx.from,"-") && load(c,c->tx.from,&oldb,&oldm))goto done;
     if(secure(c,&m,&oldm))goto done;
     if(tb_settings_host(c->root,c->state))goto done;
+    /* Refused preflight must retain both completed history records. Archive
+     * the old current record only when the new transaction can be armed. */
+    if(completed && archive_complete(c))goto done;
     if(state(c,"staging"))goto done;
     if(copybundle(c,source,&b,&m) || syncall(c->slot))goto done;
     if(state(c,"ready"))goto done;
@@ -1117,7 +1119,7 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
     }
     else r=TB_USAGE;
 done:
-    if(r==TB_FAIL)tb_err("%s failed: %s",cmd,strerror(errno));
+    if(r==TB_FAIL)tb_err("%s failed",cmd);
     if(c.lock>=0)tam_fs_unlock(c.lock);
     if(c.rootfd>=0)close(c.rootfd);
     if(c.slot>=0)close(c.slot);

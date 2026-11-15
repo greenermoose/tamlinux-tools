@@ -73,3 +73,6 @@ Topic: Plain text README conversion
 Tool: Codex CLI 0.169.0
 Model: gpt-6.1-sol
 Record: Session <2026-11-13-plain-readmes.md>
+
+- 2026-11-15 — Preserve completed records on refused preparation
+  <2026-11-15-refused-prepare.md>, Codex CLI 0.169.0 / gpt-6.1-sol.

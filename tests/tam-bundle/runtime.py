@@ -64,6 +64,37 @@ class Runtime(unittest.TestCase):
         shutil.rmtree(self.root/'var/lib/pacman/local')
         self.tb('needs',self.b,code=1)
 
+    def test_refused_prepare_preserves_completed_and_previous_records(self):
+        self.install_a(); self.tb('install',self.b); self.tb('apply')
+        state=self.root/'var/lib/tamlinux'
+        completed=(state/'transaction').read_bytes()
+        previous=(state/'last-transaction').read_bytes()
+        c=self.bundle('C')
+        extra=c/'placed/usr/bin/tam-extra'
+        extra.write_text('#!/bin/sh\nexit 0\n'); extra.chmod(0o755)
+        self.reseal(c,targets=['arch x86_64 baseline x86-64-v2'])
+
+        def unchanged():
+            self.assertEqual((state/'transaction').read_bytes(),completed)
+            self.assertEqual((state/'last-transaction').read_bytes(),previous)
+
+        conflict=self.root_file('usr/bin/tam-extra',b'unrelated file',0o755)
+        result=self.tb('install',c,code=1)
+        self.assertIn('unowned or conflicting placed file',result.stderr)
+        unchanged(); self.assertEqual(conflict.read_bytes(),b'unrelated file')
+        conflict.unlink()
+
+        self.package('foreign','1-1',['usr/bin/tam-extra'])
+        self.tb('install',c,code=1); unchanged()
+        shutil.rmtree(next((self.root/'var/lib/pacman/local').glob('foreign-*')))
+
+        self.reseal(c,needs=['file /missing'],targets=['arch x86_64 baseline x86-64-v2'])
+        self.tb('install',c,code=1); unchanged()
+        self.tb('install',c,'--expect-bundle','sha256:'+'0'*64,code=1); unchanged()
+
+        self.reseal(c,targets=['arch x86_64 baseline x86-64-v2'])
+        self.tb('install',c); self.tb('apply'); self.assert_live(c)
+
     def test_post_transaction_check_reads_locked_database(self):
         dep=self.root_file('usr/lib/native-dependency')
         self.package('library','2.0-1',['usr/lib/native-dependency'])
