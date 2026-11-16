@@ -19,10 +19,12 @@ typedef struct {
     unsigned long uid;
     size_t done;
     unsigned fields;
+    unsigned docs_from, docs_to, borrowed_from, borrowed_to;
 } transaction;
 typedef struct {
     const char *root;
     const char *expected_bundle;
+    const char *docs;
     int rootfd, slot, state, lock;
     transaction tx;
     char **allowed;
@@ -136,12 +138,18 @@ static int txline(void *u,size_t line,int fmt,char **f,size_t n) {
     (void)line;
     (void)fmt;
     if(n!=2)return 1;
-    const char *keys[]={"id","from","to","state","uid","done","capture","kind","activation"};
+    const char *keys[]={"id","from","to","state","uid","done","capture","kind","activation","docs-from","docs-to","borrowed-from","borrowed-to"};
     unsigned bit=0;
     for(size_t i=0;i<sizeof keys/sizeof *keys;i++)
         if(!strcmp(f[0],keys[i]))bit=1U<<i;
     if(!bit || (t->fields&bit))return 1;
     t->fields|=bit;
+    if(bit >= 512) {
+        if(strlen(f[1]) != 1 || f[1][0] < '0' || f[1][0] > '7')return 1;
+        unsigned *out=!strcmp(f[0],"docs-from")?&t->docs_from:!strcmp(f[0],"docs-to")?&t->docs_to:
+                      !strcmp(f[0],"borrowed-from")?&t->borrowed_from:&t->borrowed_to;
+        *out=(unsigned)(f[1][0]-'0');return 0;
+    }
     char *dst=NULL;
     size_t cap=0;
     if(!strcmp(f[0],"id")){dst=t->id;
@@ -184,8 +192,8 @@ static int readtx(context *c) {
     int r=tam_rec_parse(text,len,2,1,txline,&c->tx,NULL);
     free(text);
     transaction *t=&c->tx;
-    if(r || (t->fields!=255 && t->fields!=511) || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
-       !identity(t->from) || !identity(t->to) || !strcmp(t->from,t->to) ||
+    if(r || ((t->fields & 511)!=255 && (t->fields & 511)!=511) || ((t->fields & ~511U) && (t->fields & ~511U)!=7680) || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
+       !identity(t->from) || !identity(t->to) || (!strcmp(t->from,t->to) && t->docs_from==t->docs_to && t->borrowed_from==t->borrowed_to) ||
        (strcmp(t->state,"staging") && strcmp(t->state,"ready") && strcmp(t->state,"applying") && strcmp(t->state,"activating") && strcmp(t->state,"complete"))) {
         tb_err("invalid transaction; desktop must remain blocked");
     return -1;
@@ -197,6 +205,7 @@ static int state(context *c,const char *s) {
     char text[1024];
     int n=snprintf(text,sizeof text,"format 1\nid %s\nfrom %s\nto %s\ncapture -\nuid %lu\nkind product-only\nstate %s\ndone %zu\nactivation %s\n",
         c->tx.id,c->tx.from,c->tx.to,c->tx.uid,s,c->tx.done,*c->tx.activation?c->tx.activation:"-");
+    n+=snprintf(text+n,sizeof text-(size_t)n,"docs-from %u\ndocs-to %u\nborrowed-from %u\nborrowed-to %u\n",c->tx.docs_from,c->tx.docs_to,c->tx.borrowed_from,c->tx.borrowed_to);
     if(atomic(c->state,"transaction",text,(size_t)n))return -1;
     char fault[64];
     snprintf(fault,sizeof fault,"v2-state-%s",s);
@@ -578,6 +587,73 @@ static int cancel(context *c) {
     free(slot);
     return r?TB_FAIL:TB_OK;
 }
+typedef struct { unsigned selected, borrowed, seen; } doc_selection;
+static int docline(void *user,size_t line,int format,char **f,size_t n) {
+    (void)line;(void)format;doc_selection *d=user;
+    if(n!=2)return 1;
+    if(!strcmp(f[0],"provider"))return 0;
+    unsigned bit=!strcmp(f[0],"selected")?1:!strcmp(f[0],"borrowed")?2:0;
+    if(!bit || (d->seen & bit) || strlen(f[1])!=1 || f[1][0]<'0' || f[1][0]>'7')return 1;
+    d->seen|=bit;
+    if(bit==1)d->selected=f[1][0]-'0';else d->borrowed=f[1][0]-'0';
+    return 0;
+}
+static int read_docs(context *c,doc_selection *d) {
+    memset(d,0,sizeof *d);size_t n=0;
+    char *text=tb_read_limit(c->state,"documentation",&n,65536);
+    if(!text)return errno==ENOENT?0:-1;
+    int result=tam_rec_parse(text,n,2,1,docline,d,NULL) || d->seen!=3 || (d->borrowed & ~d->selected);
+    free(text);return result?-1:0;
+}
+/* Native documentation is reused only when every expected byte is supplied
+ * by native packages. Partial/mismatched providers are never overwritten. */
+static int borrowed_docs(context *c,const tb_manifest_t *m,unsigned declared,unsigned selected,unsigned *borrowed) {
+    tb_native_t native={0};*borrowed=0;
+    if(tb_native_read(c->root,true,&native))return -1;
+    for(size_t i=0;i<m->n;i++) {
+        const tb_entry_t *e=&m->v[i];unsigned bit=tb_doc_path(e->path)&declared&selected;
+        if(!bit || e->type!='f')continue;
+        char absolute[4096];snprintf(absolute,sizeof absolute,"/%s",e->path+7);
+        if(tb_native_owner(&native,absolute))*borrowed|=bit;
+    }
+    int result=0;
+    for(size_t i=0;i<m->n;i++) {
+        const tb_entry_t *e=&m->v[i];
+        if(e->type!='f' || !(tb_doc_path(e->path)&*borrowed) || (!strcmp(strrchr(e->path,'/')+1,"SOURCE.json") || strstr(e->path,"/licenses/")))continue;
+        char absolute[4096];snprintf(absolute,sizeof absolute,"/%s",e->path+7);
+        if(!tb_native_owner(&native,absolute) || !matches(c->rootfd,e->path+7,e)) {
+            tb_err("native documentation differs from selected collection: %s",absolute);result=-1;break;
+        }
+    }
+    tb_native_free(&native);return result;
+}
+static int write_docs(context *c,const tb_manifest_t *full) {
+    tam_str_t text=tam_str_new("format 1\n");
+    text=tam_str_cat_printf(text,"selected %u\nborrowed %u\n",c->tx.docs_to,c->tx.borrowed_to);
+    tb_native_t native={0};
+    if(tb_native_read(c->root,true,&native)){tam_str_free(text);return -1;}
+    unsigned recorded=0;const char *names[]={"info","tldr","archwiki"};
+    for(size_t i=0;i<full->n;i++) {
+        const tb_entry_t *e=&full->v[i];unsigned bit=tb_doc_path(e->path)&c->tx.borrowed_to&~recorded;
+        if(!bit || e->type!='f')continue;
+        char absolute[4096];snprintf(absolute,sizeof absolute,"/%s",e->path+7);
+        const char *owner=tb_native_owner(&native,absolute);
+        if(!owner)continue; /* SOURCE/license metadata stays in the retained payload. */
+        char *version=owner?tb_native_version(&native,owner):NULL;
+        unsigned index=bit==1?0:bit==2?1:2;
+        if(!version){tb_native_free(&native);tam_str_free(text);return -1;}
+        text=tam_str_cat_printf(text,"provider %s %s %s\n",names[index],owner,version);
+        free(version);recorded|=bit;
+    }
+    tb_native_free(&native);
+    int result=text?atomic(c->state,"documentation",text,tam_str_len(text)):-1;
+    tam_str_free(text);return result;
+}
+static int active_docs(tb_manifest_t *m,const tb_bundle_t *b,unsigned selected,unsigned borrowed) {
+    if((selected & ~b->docs) || (borrowed & ~selected))return -1;
+    tb_docs_filter(m,b->docs,selected & ~borrowed);return 0;
+}
+
 static int prepare(context *c,const char *source) {
     unsigned long uid;
     if(prepare_uid(&uid))return TB_FAIL;
@@ -589,7 +665,7 @@ static int prepare(context *c,const char *source) {
     return TB_INTERRUPTED;
     }
     tb_bundle_t b={0},oldb={0};
-    tb_manifest_t m={0},oldm={0};
+    tb_manifest_t m={0},oldm={0},full={0};
     int r=TB_FAIL;
     if(tb_tree_read(AT_FDCWD,source,&b,&m) || b.format!=2 || tb_v2_verify(source))goto done;
     if(c->expected_bundle && strcmp(c->expected_bundle,b.hash)) {
@@ -600,22 +676,29 @@ static int prepare(context *c,const char *source) {
     if(have && cancel(c))goto done;
     memset(&c->tx,0,sizeof c->tx);
     if(current(c,c->tx.from))goto done;
-    if(!strcmp(c->tx.from,b.id)){tb_err("bundle already current");
-    goto done;
-    }
+    doc_selection previous;
+    if(read_docs(c,&previous))goto done;
+    c->tx.docs_from=previous.selected;c->tx.borrowed_from=previous.borrowed;
+    c->tx.docs_to=c->docs?0:(strcmp(c->tx.from,"-")?previous.selected & b.docs:b.docs);
+    if(c->docs && tb_docs_parse(c->docs,&c->tx.docs_to))goto done;
+    if(c->tx.docs_to & ~b.docs){tb_err("requested documentation is not carried by this bundle");goto done;}
+    if(borrowed_docs(c,&m,b.docs,c->tx.docs_to,&c->tx.borrowed_to))goto done;
+    if(!strcmp(c->tx.from,b.id) && c->tx.docs_from==c->tx.docs_to && c->tx.borrowed_from==c->tx.borrowed_to){tb_err("bundle and documentation already current");goto done;}
+    if(tb_manifest_parse(m.text,m.len,"full documentation payload",&full))goto done;
+    if(active_docs(&m,&b,c->tx.docs_to,c->tx.borrowed_to))goto done;
     strcpy(c->tx.to,b.id);
     c->tx.uid=uid;
     unsigned char random[16];
     if(getrandom(random,sizeof random,0)!=sizeof random)goto done;
     for(size_t i=0;i<sizeof random;i++)snprintf(c->tx.id+i*2,3,"%02x",random[i]);
     if(strcmp(c->tx.from,"-") && load(c,c->tx.from,&oldb,&oldm))goto done;
-    if(secure(c,&m,&oldm))goto done;
+    if(active_docs(&oldm,&oldb,c->tx.docs_from,c->tx.borrowed_from) || secure(c,&m,&oldm))goto done;
     if(tb_settings_host(c->root,c->state))goto done;
     /* Refused preflight must retain both completed history records. Archive
      * the old current record only when the new transaction can be armed. */
     if(completed && archive_complete(c))goto done;
     if(state(c,"staging"))goto done;
-    if(copybundle(c,source,&b,&m) || syncall(c->slot))goto done;
+    if(copybundle(c,source,&b,&full) || syncall(c->slot))goto done;
     if(state(c,"ready"))goto done;
     tb_note("Tamlinux %s is ready. Leave the desktop and start it again to apply it.",b.version);
     r=TB_OK;
@@ -624,6 +707,7 @@ done:
     tb_bundle_free(&oldb);
     tb_manifest_free(&m);
     tb_manifest_free(&oldm);
+    tb_manifest_free(&full);
     return r;
 }
 static int replace(context *c,const tb_entry_t *e,int scratch) {
@@ -697,6 +781,7 @@ static int resume_check(context *c,const tb_manifest_t *m,const tb_manifest_t *o
 }
 static bool activation_plan(const context *c,char hash[TB_HASH_LEN+1]) {
     tam_str_t plan=tam_str_new("format 1\n");
+    plan=tam_str_cat_printf(plan,"documentation %u %u %u %u\n",c->tx.docs_from,c->tx.docs_to,c->tx.borrowed_from,c->tx.borrowed_to);
     if(c->services && plan) {
         const char *fields[]={"services",c->services};
         plan=tam_rec_cat(plan,fields,2);
@@ -796,6 +881,7 @@ static int detach_apply(context *c) {
     char cur[256];
     if(load(c,c->tx.from,&b,&old) || b.format!=2 || version_check(c,c->tx.from,&old) ||
        current(c,cur) || (strcmp(cur,c->tx.from) && strcmp(cur,"-")) ||
+       active_docs(&old,&b,c->tx.docs_from,c->tx.borrowed_from) ||
        tb_native_conflicts(c->root,&empty,&old) || mountcheck(c,&old))goto done;
     if(!strcmp(c->tx.state,"ready")) {
         if(strcmp(cur,c->tx.from) || secure(c,&empty,&old))goto done;
@@ -836,7 +922,7 @@ static int detach_apply(context *c) {
         tb_fault("detach-current-unlink");
         if(syncdir(c->slot))goto done;
     }
-    if(atomic(c->state,"record","format 2\n",9) || state(c,"complete") || syncall(c->slot))goto done;
+    if(write_docs(c,&empty) || atomic(c->state,"record","format 2\n",9) || state(c,"complete") || syncall(c->slot))goto done;
     result=TB_OK;
 done:
     tb_bundle_free(&b); tb_manifest_free(&old);
@@ -863,6 +949,9 @@ static int detach(context *c,const char *expected) {
     if(have && archive_complete(c))return TB_FAIL;
     memset(&c->tx,0,sizeof c->tx);
     strcpy(c->tx.from,cur); strcpy(c->tx.to,"-");
+    doc_selection selection;
+    if(read_docs(c,&selection))return TB_FAIL;
+    c->tx.docs_from=selection.selected;c->tx.borrowed_from=selection.borrowed;
     if(prepare_uid(&c->tx.uid))return TB_FAIL;
     unsigned char random[16];
     if(getrandom(random,sizeof random,0)!=sizeof random)return TB_FAIL;
@@ -887,17 +976,25 @@ static int apply(context *c,bool yes) {
     if(!activation_plan(c,activation))goto done;
     if(load(c,c->tx.to,&b,&m))goto done;
     if(strcmp(c->tx.from,"-") && load(c,c->tx.from,&oldb,&oldm))goto done;
+    unsigned borrowed=0;
+    if(version_check(c,c->tx.to,&m) || borrowed_docs(c,&m,b.docs,c->tx.docs_to,&borrowed) || borrowed!=c->tx.borrowed_to)goto done;
+    tb_manifest_t full={0};
+    if(tb_manifest_parse(m.text,m.len,"documentation receipt",&full))goto done;
+    tb_manifest_free(&full);
+    if(active_docs(&m,&b,c->tx.docs_to,c->tx.borrowed_to) ||
+       active_docs(&oldm,&oldb,c->tx.docs_from,c->tx.borrowed_from))goto done;
     char *versions=tam_path_join(c->root,"usr/lib/tamlinux/version");
     char *product=versions?tam_path_join(versions,c->tx.to):NULL; free(versions);
     int compatible=product?tb_contract_check(c->root,product,&b,false):-1; free(product);
     if(compatible || tb_native_conflicts(c->root,&m,&oldm))goto done;
+    bool docs_only=!strcmp(c->tx.from,c->tx.to);
     if(!strcmp(c->tx.state,"ready")) {
         bool stopped=false;
-        if(c->services){if(command(c,c->services,"stop")){command(c,c->services,"restart-old");
+        if(c->services && !docs_only){if(command(c,c->services,"stop")){command(c,c->services,"restart-old");
     goto done;
     }stopped=true;
     }
-        int busy=tb_busy(c->root,c->tx.from,&oldm,false);
+        int busy=docs_only?0:tb_busy(c->root,c->tx.from,&oldm,false);
         if(busy>0 && yes)busy=tb_busy(c->root,c->tx.from,&oldm,true);
         if(busy || secure(c,&m,&oldm) || version_check(c,c->tx.to,&m)) {
             if(stopped && command(c,c->services,"restart-old"))goto done;
@@ -983,10 +1080,13 @@ static int apply(context *c,bool yes) {
             c->tx.done=i+1;
     if(state(c,"activating"))goto done;
         }
-        if(c->services && command(c,c->services,"restart-new")){r=TB_AFTER_FAILED;
+        if(c->services && !docs_only && command(c,c->services,"restart-new")){r=TB_AFTER_FAILED;
     goto done;
     }
-        if(state(c,"complete"))goto done;
+        tb_bundle_t receipt_bundle={0};tb_manifest_t receipt_manifest={0};
+        int receipt_error=load(c,c->tx.to,&receipt_bundle,&receipt_manifest) || write_docs(c,&receipt_manifest);
+        tb_bundle_free(&receipt_bundle);tb_manifest_free(&receipt_manifest);
+        if(receipt_error || state(c,"complete"))goto done;
     }
     r=TB_OK;
 done:
@@ -996,6 +1096,34 @@ done:
     tb_manifest_free(&oldm);
     return r;
 }
+static int prepare_docs(context *c,bool dry) {
+    char cur[256];if(current(c,cur) || !strcmp(cur,"-"))return TB_FAIL;
+    tb_bundle_t b={0};tb_manifest_t m={0};int result=TB_FAIL;
+    if(load(c,cur,&b,&m) || version_check(c,cur,&m))goto done;
+    unsigned mask;if(tb_docs_parse(c->docs,&mask) || (mask & ~b.docs))goto done;
+    if(dry){printf("documentation selection: %s\n",c->docs);result=TB_OK;goto done;}
+    char temporary[]="/tmp/tam-bundle-docs-XXXXXX";
+    if(!mkdtemp(temporary))goto done;
+    int dst=open(temporary,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    char rel[300];snprintf(rel,sizeof rel,"version/%s",cur);
+    int src=directory(c->slot,rel,false),failed=src<0 || dst<0;
+    for(size_t i=0;i<m.n && !failed;i++) {
+        const tb_entry_t *e=&m.v[i];char path[4096];
+        if(e->type!='d')location(path,e);
+        if(e->type=='d'){int fd=directory(dst,e->path,true);failed=fd<0;if(fd>=0)close(fd);}
+        else if(e->type=='f')failed=copyfile(src,path,dst,e->path,e->mode);
+        else {char *leaf=NULL;int fd=parent(dst,e->path,true,&leaf);failed=fd<0 || symlinkat(e->value,fd,leaf);if(fd>=0)close(fd);free(leaf);}
+    }
+    const char *records[]={"BUNDLE","MANIFEST","SETTINGS"};
+    for(size_t i=0;i<3 && !failed;i++)failed=copyfile(src,records[i],dst,records[i],0644);
+    if(!failed)failed=directory_modes(dst,&m,false);
+    if(src>=0)close(src);
+    if(dst>=0)close(dst);
+    if(!failed)result=prepare(c,temporary);
+    tb_remove_path(temporary);
+done:tb_bundle_free(&b);tb_manifest_free(&m);return result;
+}
+
 static int retained_contracts(context *c,bool native_hook) {
     int fd=directory(c->slot,"version",false);
     if(fd<0)return errno==ENOENT?0:-1;
@@ -1014,9 +1142,9 @@ static int retained_contracts(context *c,bool native_hook) {
     }
     closedir(dir); return result;
 }
-int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if_pending,bool yes,const char *expected_bundle) {
+int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if_pending,bool yes,const char *expected_bundle,const char *docs) {
     (void)if_pending;
-    context c={.root=root,.expected_bundle=expected_bundle,.rootfd=-1,.slot=-1,.state=-1,.lock=-1};
+    context c={.root=root,.expected_bundle=expected_bundle,.docs=docs,.rootfd=-1,.slot=-1,.state=-1,.lock=-1};
     int r=TB_FAIL;
     bool migration=!strcmp(cmd,"migrate-dormant");
     bool prepare_cmd=migration || !strcmp(cmd,"install") || !strcmp(cmd,"prepare") || !strcmp(cmd,"restore");
@@ -1028,6 +1156,7 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
     if(c.slot<0 || c.state<0){if(!prepare_cmd && errno==ENOENT)r=TB_OK;
     goto done;
     }
+    if(docs)printf("requested-documentation: %s\n",docs);
     if(!strcmp(cmd,"native-status")) {
         r=arg?TB_USAGE:retained_contracts(&c,true)?TB_FAIL:TB_OK;
         goto done;
@@ -1040,6 +1169,7 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
     goto done;
     }
         if(print_status(&c,cur))goto done;
+        if(have)printf("documentation: %u\nborrowed-documentation: %u\n",c.tx.docs_to,c.tx.borrowed_to);
         if(have)printf("transaction: %s\nstate: %s\nfrom: %s\nto: %s\ncapture: -\n",c.tx.id,c.tx.state,c.tx.from,c.tx.to);
         if(have && strcmp(c.tx.to,"-") && strcmp(c.tx.state,"staging")) {
             tb_bundle_t target={0}; tb_manifest_t manifest={0};
@@ -1054,6 +1184,10 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
             tb_bundle_t b={0};
     tb_manifest_t m={0};
             if(load(&c,cur,&b,&m) || version_check(&c,cur,&m))r=TB_FAIL;
+            doc_selection selection;
+            if(read_docs(&c,&selection))r=TB_FAIL;
+            unsigned native_mask=0;
+            if(borrowed_docs(&c,&m,b.docs,selection.borrowed,&native_mask) || native_mask!=selection.borrowed || active_docs(&m,&b,selection.selected,selection.borrowed))r=TB_FAIL;
             for(size_t i=0;i<m.n;i++)if(!strncmp(m.v[i].path,"placed/",7) && m.v[i].type=='f' && !matches(c.rootfd,m.v[i].path+7,&m.v[i]))r=TB_FAIL;
             tb_bundle_free(&b);
     tb_manifest_free(&m);
@@ -1076,7 +1210,8 @@ int tb_v2_main(const char *root,const char *cmd,const char *arg,bool dry,bool if
     free(statepath);
     if(c.lock<0)goto done;
     if(profile(&c))goto done;
-    if(migration)r=migrate_dormant(&c,arg,dry);
+    if(!strcmp(cmd,"docs-set"))r=prepare_docs(&c,dry);
+    else if(migration)r=migrate_dormant(&c,arg,dry);
     else if(!strcmp(cmd,"detach"))r=detach(&c,arg);
     else if(prepare_cmd) {
         if(!arg){r=TB_USAGE;

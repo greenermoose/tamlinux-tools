@@ -25,6 +25,13 @@ int tb_seal(const char *dir, const tb_seal_t *o, char id[256]) {
     }
     tb_manifest_t m;
     if ((o->format == 2 ? tb_v2_manifest(dir, &m) : tb_manifest_build(dir, &m)) != 0) return TB_FAIL;
+    for(size_t i=0;i<m.n;i++) {
+        const tb_entry_t *e=&m.v[i];
+        if((tb_doc_path(e->path)&o->docs) && e->type=='f' && (e->mode&0111)) {
+            tb_err("optional documentation must be non-executable data: %s",e->path);
+            tb_manifest_free(&m);return TB_FAIL;
+        }
+    }
     if(!tb_buildenv_matches(o->buildenv,&m)){tb_err("buildenv does not match the carried recipe/BUILDENV record"); tb_manifest_free(&m); return TB_FAIL;}
 
     char built[64];
@@ -51,6 +58,10 @@ int tb_seal(const char *dir, const tb_seal_t *o, char id[256]) {
     tail = tam_str_cat_printf(tail, "tool tam-bundle %s\n", TB_VERSION);
     tail = tam_str_cat_printf(tail, "host %s\n", o->host ? o->host : "any");
     for (size_t i = 0; i < o->ntargets; i++) tail = tam_str_cat_printf(tail, "target %s\n", o->targets[i]);
+    const char *docnames[] = {"info", "tldr", "archwiki"};
+    if (o->docs && o->format != 2) { tb_manifest_free(&m); tam_str_free(head); tam_str_free(tail); return TB_USAGE; }
+    for (unsigned i = 0; i < 3; i++) if (o->docs & (1U << i))
+        tail = tam_str_cat_printf(tail, "optional-doc %s\n", docnames[i]);
     for (size_t i = 0; i < o->nneeds; i++) tail = tam_str_cat_printf(tail, "needs %s\n", o->needs[i]);
     for (size_t i = 0; i < o->nafter; i++) tail = tam_str_cat_printf(tail, "after %s\n", o->after[i]);
     tail = tam_str_cat_printf(tail, "built %s\n", built);

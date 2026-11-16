@@ -109,6 +109,7 @@ test: all bin/tam-bundle-test bin/tam-bundle-busy-test test-journal
 	@python3 -B tests/tam-bundle/format2_build.py
 	@python3 -B tests/tam-bundle/namespace.py
 	@python3 -B tests/tam-bundle/format2.py
+	@python3 -B tests/tam-bundle/documentation.py
 	@python3 -B tests/tam-bundle/settings.py
 	@python3 -B tests/tam-bundle/runtime.py
 	@tests/man.sh

@@ -647,13 +647,13 @@ static int tx_read_record(int fd,const char *record,settings_tx *t) {
     int r=tam_rec_parse(text,n,2,1,stxline,t,NULL); free(text);
     if(r || t->fields!=2047 || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
        strlen(t->system)!=32 || strspn(t->system,"0123456789abcdef")!=32 ||
-       (strcmp(t->kind,"upgrade") && strcmp(t->kind,"restore") && strcmp(t->kind,"settings-only")) ||
+       (strcmp(t->kind,"upgrade") && strcmp(t->kind,"restore") && strcmp(t->kind,"settings-only") && strcmp(t->kind,"documentation")) ||
        (strcmp(t->state,"ready") && strcmp(t->state,"staging") && strcmp(t->state,"applying") &&
         strcmp(t->state,"activating") && strcmp(t->state,"complete")))return -1;
-    bool only=!strcmp(t->kind,"settings-only"), upgrade=!strcmp(t->kind,"upgrade");
+    bool only=!strcmp(t->kind,"settings-only"), docs=!strcmp(t->kind,"documentation"), upgrade=!strcmp(t->kind,"upgrade");
     bool early=!strcmp(t->state,"ready") || !strcmp(t->state,"staging") || !strcmp(t->state,"applying");
-    if(!strcmp(t->to,"-") || (only?strcmp(t->from,t->to):(!strcmp(t->from,t->to) || strcmp(t->id,t->system))) ||
-       (upgrade?strcmp(t->capture,"-"):!strcmp(t->capture,"-")) ||
+    if(!strcmp(t->to,"-") || (only?strcmp(t->from,t->to):((docs?strcmp(t->from,t->to):!strcmp(t->from,t->to)) || strcmp(t->id,t->system))) ||
+       ((upgrade || docs)?strcmp(t->capture,"-"):!strcmp(t->capture,"-")) ||
        (early && (t->done || strcmp(t->activation,"-"))) ||
        (!strcmp(t->state,"ready") && strcmp(t->automatic,"-")) ||
        ((!strcmp(t->state,"applying") || !strcmp(t->state,"activating") || !strcmp(t->state,"complete")) && !strcmp(t->automatic,"-")) ||
@@ -674,15 +674,19 @@ static int tx_write(int fd,settings_tx *t,const char *state) {
     if(!r){char point[64]; snprintf(point,sizeof point,"settings-state-%s",state); tb_fault(point);}
     return r;
 }
-typedef struct {char id[65],from[256],to[256],state[16]; unsigned fields; unsigned long uid;} system_tx;
+typedef struct {char id[65],from[256],to[256],state[16]; unsigned fields; unsigned long uid; unsigned docs[4];} system_tx;
 static int systemline(void *arg,size_t line,int fmt,char **f,size_t n) {
     (void)line; (void)fmt;
     system_tx *t=arg;
     if(n!=2)return 1;
-    const char *keys[]={"id","from","to","state","capture","uid","kind","done","activation"};
+    const char *keys[]={"id","from","to","state","capture","uid","kind","done","activation","docs-from","docs-to","borrowed-from","borrowed-to"};
     char *slots[]={t->id,t->from,t->to,t->state};
     size_t caps[]={sizeof t->id,sizeof t->from,sizeof t->to,sizeof t->state};
-    for(size_t i=0;i<9;i++)if(!strcmp(f[0],keys[i])) {
+    for(size_t i=0;i<13;i++)if(!strcmp(f[0],keys[i])) {
+        if(i>=9) {
+            if((t->fields&(1U<<i)) || strlen(f[1])!=1 || f[1][0]<'0' || f[1][0]>'7')return 1;
+            t->fields|=1U<<i;t->docs[i-9]=f[1][0]-'0';return 0;
+        }
         if(t->fields&(1U<<i))return 1;
         t->fields|=1U<<i;
         if(i<4) {
@@ -707,8 +711,8 @@ static int system_read_record(const char *root,bool previous,system_tx *t) {
     if(!previous && !text && errno==ENOENT)text=metadata(fd,"last-transaction",&n,4096);
     int r=text?tam_rec_parse(text,n,2,1,systemline,t,NULL):-1;
     free(text); close(fd);
-    if(r || (t->fields!=255 && t->fields!=511) || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
-       !strcmp(t->to,"-") || !strcmp(t->from,t->to) ||
+    if(r || (((t->fields&511)!=255 && (t->fields&511)!=511) || ((t->fields&~511U) && (t->fields&~511U)!=7680)) || strlen(t->id)!=32 || strspn(t->id,"0123456789abcdef")!=32 ||
+       !strcmp(t->to,"-") || (!strcmp(t->from,t->to) && t->docs[0]==t->docs[1] && t->docs[2]==t->docs[3]) ||
        (strcmp(t->state,"ready") && strcmp(t->state,"staging") && strcmp(t->state,"applying") &&
         strcmp(t->state,"activating") && strcmp(t->state,"complete")))return -1;
     return 0;
@@ -767,7 +771,7 @@ static int settings_plan(user_settings *u,const char *root,const char *capture,b
            !strcmp(previous.from,sys.from) && !strcmp(previous.to,sys.to) &&
            !strcmp(previous.capture,capture?capture:"-"))return TB_OK;
         if(have && strcmp(previous.state,"ready") && strcmp(previous.state,"complete"))return TB_INTERRUPTED;
-        strcpy(t.id,sys.id); strcpy(t.system,sys.id); strcpy(t.from,sys.from); strcpy(t.to,sys.to); strcpy(t.kind,capture?"restore":"upgrade");
+        strcpy(t.id,sys.id); strcpy(t.system,sys.id); strcpy(t.from,sys.from); strcpy(t.to,sys.to); strcpy(t.kind,capture?"restore":!strcmp(sys.from,sys.to)?"documentation":"upgrade");
     }
     /* Planning reads lists and identities but never captures or stages user
      * bytes. Everything is recomputed when apply-settings actually runs. */
@@ -1223,11 +1227,12 @@ static int session_activate(user_settings *u,const char *root) {
     }
     bool pending=strcmp(sys.state,"complete")!=0;
     bool ready=!strcmp(sys.state,"ready");
+    bool docs_only=!strcmp(sys.from,sys.to);
     if(pending && (strcmp(user.system,sys.id) || strcmp(user.from,sys.from) || strcmp(user.to,sys.to))) {
         tb_err("the pending system and settings plans do not agree");
         return TB_INTERRUPTED;
     }
-    if(ready) {
+    if(ready && !docs_only) {
         if(session_units(root,"stop",sys.id)) {
             session_units(root,"restart-old",sys.id);
             return TB_AFTER_FAILED;
@@ -1275,7 +1280,7 @@ static int session_activate(user_settings *u,const char *root) {
         if(system_read(root,&sys))return TB_INTERRUPTED;
         if(strcmp(sys.id,expected))return TB_INTERRUPTED;
         if(!strcmp(sys.state,"ready")) {
-            if(session_units(root,"restart-old",sys.id))return TB_AFTER_FAILED;
+            if(!docs_only && session_units(root,"restart-old",sys.id))return TB_AFTER_FAILED;
             return session_ready(u,root);
         }
         if(!applied || strcmp(sys.state,"complete"))return TB_INTERRUPTED;
@@ -1459,7 +1464,7 @@ static int export_product(user_settings *u,const char *root,int dest,const char 
             if(asprintf(&line,"%s %s %s",b.needs[i].kind,b.needs[i].target,b.needs[i].pkgs)<0)line=NULL;
             needs[i]=line;
         }
-        tb_seal_t options={.format=2,.buildenv=b.buildenv,.derived=b.id,.edits=edits,.nedits=count,
+        tb_seal_t options={.format=2,.docs=b.docs,.buildenv=b.buildenv,.derived=b.id,.edits=edits,.nedits=count,
             .name=b.name,.version=b.version,.host=b.host,.targets=(const char *const *)b.targets,.ntargets=b.ntargets,
             .sources=(const char *const *)b.sources,.nsources=b.nsources,.tools=(const char *const *)b.tools,.ntools=b.ntools,
             .needs=needs,.nneeds=b.nneeds,.after=(const char *const *)b.after,.nafter=b.nafter};

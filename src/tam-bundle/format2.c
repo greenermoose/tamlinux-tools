@@ -52,6 +52,12 @@ int tb_v2_verify(const char *dir) {
      tb_manifest_t m = {0};
      tb_check_t c = {0};
     if (tb_tree_read(AT_FDCWD, dir, &b, &m)) return TB_FAIL;
+    for(size_t i=0;i<m.n;i++) {
+        const tb_entry_t *e=&m.v[i];
+        if((tb_doc_path(e->path)&b.docs) && e->type=='f' && (e->mode&0111)) {
+            tb_err("executable optional documentation refused");tb_bundle_free(&b);tb_manifest_free(&m);return TB_FAIL;
+        }
+    }
     int r = tb_tree_check(dir, &m, NULL, true, &c);
     /* Empty sections still have their two structural directories. */
     if (b.format == 2) {

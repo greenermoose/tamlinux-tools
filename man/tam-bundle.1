@@ -135,6 +135,36 @@ say exactly which bundle is live.
 A previous live tree, kept whole for rollback at
 .IB slot /kept/ bundle-id /\fR.
 .SH COMMANDS
+.SS Optional host documentation (0.14)
+.TP
+.B docs set SELECTION
+Prepare a change to the current format-2 product's optional documentation.
+SELECTION is none or a comma-separated list of info, tldr and archwiki.
+Finish the normal apply and user settings transaction before session use.
+The product identity and retained payload stay the same. Documentation-only
+changes do not stop product services or close product processes.
+.TP
+.B \-\-docs LIST
+Select optional collections during install or prepare. A first installation
+selects all declared collections by default; an upgrade retains the previous
+selection. Undeclared or repeated names are refused. Selection is bound to
+the activation digest and durable transaction, including forward recovery.
+.TP
+.B \-\-optional-doc NAME
+Declare a collection when sealing format 2. Its fixed placed root is
+/usr/share/doc/info, /usr/share/doc/tldr or /usr/share/doc/arch-wiki.
+Executable documentation payloads are refused. Check verifies the complete
+retained payload and the selected placed files. Matching native-owned
+collections are reused with provider/version records; they are never
+removed or overwritten by a documentation change.
+.TP
+.B \-\-native-archives DIR
+Choose the native package archive cache for a recipe's documentation importer
+(default /var/cache/pacman/pkg). The importer and source list come from the
+exact packaging commit. Source archives must match declared hashes; installed
+host files are never harvested. Imported licenses and source records remain
+beneath /usr/share/doc with the corresponding collection.
+
 .SS Private settings (0.7 development interface)
 .TP
 .BI capture " [\-o file] [\-\-save-edits]"

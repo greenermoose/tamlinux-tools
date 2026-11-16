@@ -75,6 +75,12 @@ static int bundle_line(void *user, size_t line, int format, char **f, size_t n) 
     tb_recipes_t *r = bp->r;
     r->format=format;
     if (n != 2) return bad(bp->what, line, "expected: key value");
+    if (!strcmp(f[0], "optional-doc")) {
+        unsigned bit = tb_doc_bit(f[1]);
+        if (format != 2 || !bit || (r->docs & bit)) return bad(bp->what, line, "invalid or repeated optional documentation");
+        r->docs |= bit;
+        return 0;
+    }
     if (strcmp(f[0], "name") == 0) {
         if (r->name) return bad(bp->what, line, "repeated name");
         if (!tb_valid_name(f[1])) return bad(bp->what, line, "invalid name");
@@ -83,6 +89,10 @@ static int bundle_line(void *user, size_t line, int format, char **f, size_t n) 
     if (strcmp(f[0], "host") == 0) {
         if (r->host) return bad(bp->what, line, "repeated host");
         return (r->host = strdup(f[1])) ? 0 : 1;
+    }
+    if (!strcmp(f[0], "documentation")) {
+        if (format != 2 || r->documentation || !tam_path_is_safe_rel(f[1])) return bad(bp->what, line, "documentation requires a single packaging source list");
+        r->documentation=strdup(f[1]);return r->documentation?0:1;
     }
     if (strcmp(f[0], "needs") == 0) return push(&r->needs, &r->nneeds, f[1]) ? 0 : 1;
     if(format==2 && !strcmp(f[0],"target"))return r->ntargets<16 && push(&r->targets,&r->ntargets,f[1])?0:1;
@@ -208,6 +218,7 @@ static void recipe_free(tb_recipe_t *rc) {
 }
 
 void tb_recipes_free(tb_recipes_t *r) {
+    free(r->documentation);
     free(r->name);
     free(r->host);
     free(r->text); free_list(r->targets,r->ntargets); free_list(r->placed,r->nplaced);

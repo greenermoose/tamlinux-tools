@@ -13,6 +13,7 @@ static const char usage_text[] =
     "\n"
     "Commands:\n"
     "  install <bundle>             prepare a format 2 directory or .tbundle\n"
+    "  docs set SELECTION          prepare a change to optional host documentation\n"
     "  apply [--if-pending]         finish the prepared transaction before session use\n"
     "  migrate-dormant HASH         archive the exact dormant format-1 slot\n"
     "  detach HASH                 retain the exact product and remove its placed files\n"
@@ -48,6 +49,9 @@ static const char usage_text[] =
     "Options:\n"
     "  --root DIR      format 2 installation root (default /)\n"
     "  --expect-bundle HASH   bind prepare to the selected full bundle hash\n"
+    "  --docs LIST     install none or comma-separated info,tldr,archwiki\n"
+    "  --optional-doc NAME   declare an optional documentation group when sealing\n"
+    "  --native-archives DIR  cache of hash-pinned native documentation archives\n"
     "  --format 1|2    seal format (default 1); --target TEXT records a target\n"
     "  --slot DIR      slot directory (default " TB_DEFAULT_SLOT ")\n"
     "  --state DIR     state directory (default by user; see tam-bundle(1))\n"
@@ -72,7 +76,8 @@ static int usage(const char *why) {
 }
 
 typedef struct {
-    const char *slot, *state, *root, *expected_bundle;
+    const char *slot, *state, *root, *expected_bundle, *docs;
+    unsigned optional_docs;
     int format;
     bool if_pending;
     const char *targets[16]; size_t ntargets;
@@ -82,7 +87,7 @@ typedef struct {
     const char *name, *version, *host, *built;
     const char *sources[64], *tools[64], *needs[64], *after[16];
     /* build, lock */
-    const char *output, *repos, *lock, *url;
+    const char *output, *repos, *lock, *url, *native_archives;
     size_t nsources, ntools, nneeds, nafter;
     /* positional, and where they and --state's value are in argv */
     const char *args[4];
@@ -95,7 +100,7 @@ typedef struct {
 static int cmd_seal(const opts_t *o) {
     if (o->nargs != 2 || !o->name || !o->version) return usage("seal needs a directory, --name and --version");
     tb_seal_t so = {
-        .format = o->format, .targets = o->targets, .ntargets = o->ntargets,
+        .format = o->format, .docs = o->optional_docs, .targets = o->targets, .ntargets = o->ntargets,
         .name = o->name, .version = o->version, .host = o->host, .built = o->built,
         .sources = o->sources, .nsources = o->nsources, .tools = o->tools, .ntools = o->ntools,
         .needs = o->needs, .nneeds = o->nneeds, .after = o->after, .nafter = o->nafter,
@@ -112,6 +117,7 @@ static int cmd_build(const opts_t *o) {
     char *prefix = tam_path_join(o->slot, "current");
     tb_build_opts_t bo = {
         .recipes = o->args[1], .lock = o->args[2], .output = o->output, .version = o->version,
+        .native_archives = o->native_archives,
         .host = o->host, .repos = o->repos, .prefix = prefix, .built = o->built, .verify = o->sw.full,
     };
     int r = prefix ? tb_build(&bo) : TB_FAIL;
@@ -501,6 +507,8 @@ int main(int argc, char **argv) {
             printf("tam-bundle %s (record format %d)\n", TB_VERSION, TB_FORMAT);
             return TB_OK;
         }
+        else if (!strcmp(a, "--docs")) { VALUE(); unsigned mask; if (tb_docs_parse(v, &mask)) return usage("--docs takes none or comma-separated info,tldr,archwiki"); o.docs = v; }
+        else if (!strcmp(a, "--optional-doc")) { VALUE(); unsigned bit=tb_doc_bit(v); if(!bit || (o.optional_docs & bit))return usage("invalid or repeated optional documentation"); o.optional_docs |= bit; }
         else if (strcmp(a, "--root") == 0) { VALUE(); o.root = v; }
         else if (strcmp(a, "--expect-bundle") == 0) { VALUE(); o.expected_bundle = v; }
         else if (strcmp(a, "--format") == 0) { VALUE(); if(strcmp(v,"1") && strcmp(v,"2")) return usage("format must be 1 or 2"); o.format=atoi(v); }
@@ -519,6 +527,7 @@ int main(int argc, char **argv) {
         else if (strcmp(a, "--host") == 0) { VALUE(); o.host = v; }
         else if (strcmp(a, "--built") == 0) { VALUE(); o.built = v; }
         else if (strcmp(a, "-o") == 0 || strcmp(a, "--output") == 0) { VALUE(); o.output = v; }
+        else if (!strcmp(a, "--native-archives")) { VALUE(); o.native_archives=v; }
         else if (strcmp(a, "--repos") == 0) { VALUE(); o.repos = v; }
         else if (strcmp(a, "--lock") == 0) { VALUE(); o.lock = v; }
         else if (strcmp(a, "--url") == 0) { VALUE(); o.url = v; }
@@ -540,6 +549,13 @@ int main(int argc, char **argv) {
         strspn(o.expected_bundle+7,"0123456789abcdef")!=64))
         return usage("--expect-bundle needs a full SHA-256 and a prepare operation");
 
+    if (!strcmp(cmd, "docs")) {
+        if (o.nargs != 3 || strcmp(o.args[1], "set") || o.docs) return usage("docs set takes one documentation selection");
+        unsigned mask;
+        if (tb_docs_parse(o.args[2], &mask)) return usage("invalid documentation selection");
+        return tb_v2_main(o.root ? o.root : "/", "docs-set", NULL, o.sw.dry_run, false, false, NULL, o.args[2]);
+    }
+    if (o.docs && strcmp(cmd,"install") && strcmp(cmd,"prepare") && strcmp(cmd,"restore")) return usage("--docs requires install, prepare or restore");
     if(!strcmp(cmd,"startup-ready")) {
         if(o.nargs!=1 || o.output)return usage("unexpected startup arguments");
         char *path=o.root?tam_path_join(o.root,"var/lib/tamlinux/transaction"):NULL;
@@ -588,7 +604,7 @@ int main(int argc, char **argv) {
     }
     if (o.root || !strcmp(cmd,"install") || !strcmp(cmd,"prepare") || !strcmp(cmd,"apply") || !strcmp(cmd,"cancel") || !strcmp(cmd,"restore") || !strcmp(cmd,"native-status") || !strcmp(cmd,"migrate-dormant") || !strcmp(cmd,"detach")) {
         if (o.nargs > 2) return usage("too many transaction arguments");
-        return tb_v2_main(o.root ? o.root : "/", cmd, o.nargs==2 ? o.args[1] : NULL, o.sw.dry_run, o.if_pending, o.yes,o.expected_bundle);
+        return tb_v2_main(o.root ? o.root : "/", cmd, o.nargs==2 ? o.args[1] : NULL, o.sw.dry_run, o.if_pending, o.yes,o.expected_bundle,o.docs);
     }
     if (strcmp(cmd, "seal") == 0) return cmd_seal(&o);
     if (strcmp(cmd, "verify") == 0) return cmd_verify(&o);

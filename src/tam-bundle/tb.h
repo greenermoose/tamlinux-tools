@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <sys/types.h>
 
-#define TB_VERSION "0.13.1"
+#define TB_VERSION "0.14.0"
 #define TB_FORMAT 2               /* newest record format this program reads */
 #define TB_DEFAULT_SLOT "/usr/lib/tamlinux"
 #define TB_SYSTEM_STATE "/var/lib/tam-bundle"
@@ -48,6 +48,7 @@ typedef struct {
 
 typedef struct {
     int format;
+    unsigned docs; /* optional data groups: info=1, tldr=2, archwiki=4 */
     char *buildenv;
     char **targets; size_t ntargets;
     char *derived;
@@ -224,6 +225,7 @@ bool tb_test_pkexec(void);
 
 typedef struct {
     int format;
+    unsigned docs;
     const char *buildenv;
     const char *derived;
     const char *const *edits; size_t nedits;
@@ -304,7 +306,9 @@ typedef struct {
 typedef struct {
     int format;
     char *text; size_t len;
+    unsigned docs;
     char        *name, *host;
+    char *documentation;
     char **targets; size_t ntargets;
     char **placed; size_t nplaced;
     char       **needs; size_t nneeds;
@@ -321,6 +325,7 @@ void tb_recipes_free(tb_recipes_t *r);
 
 typedef struct {
     const char *recipes, *lock, *output;
+    const char *native_archives;
     const char *version;
     const char *host;    /* overrides the bundle file's host */
     const char *repos;   /* directory of local clones tried before the URL */
@@ -376,7 +381,7 @@ extern bool tb_quiet;
 /* Format 2 product transactions. Paths are rooted at root (default /).
  * Profile commands are supplied by the rootstock, never the bundle. */
 int tb_v2_main(const char *root, const char *cmd, const char *arg, bool dry,
-               bool if_pending, bool yes, const char *expected_bundle);
+               bool if_pending, bool yes, const char *expected_bundle, const char *docs);
 int tb_v2_verify(const char *dir);
 int tb_archive_unpack(const char *archive, const char *dest);
 int tb_archive_pack(const char *dir, const char *archive);
@@ -413,4 +418,9 @@ int tb_runtime_open(int root,const char *absolute);
 int tb_version_compare(const char *actual,const char *required);
 bool tb_placement_allowed(const char *path,bool directory,char *const *roots,size_t n);
 bool tb_buildenv_matches(const char *hash,const tb_manifest_t *m);
+unsigned tb_doc_bit(const char *name);
+int tb_docs_parse(const char *selection, unsigned *mask);
+unsigned tb_doc_path(const char *path);
+void tb_docs_filter(tb_manifest_t *manifest, unsigned declared, unsigned selected);
+
 #endif

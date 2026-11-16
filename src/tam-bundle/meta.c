@@ -216,6 +216,12 @@ static int bundle_line(void *user, size_t line, int format, char **f, size_t n) 
     b->format = format;
     if (n != 2) return bad(bp->what, line, "expected: key value");
     const char *k = f[0], *v = f[1];
+    if (!strcmp(k, "optional-doc")) {
+        unsigned bit = tb_doc_bit(v);
+        if (format != 2 || !bit || (b->docs & bit)) return bad(bp->what, line, "invalid or repeated optional documentation");
+        b->docs |= bit;
+        return 0;
+    }
     if (strcmp(k, "name") == 0) {
         if (!tb_valid_name(v)) return bad(bp->what, line, "invalid name");
         return set_once(&b->name, v, bp->what, line);

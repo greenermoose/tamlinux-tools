@@ -53,3 +53,5 @@ The initial commit `18ef5de` predates this record. It was authored in an
 Antigravity session and carries that session's `AI-Tool` and `AI-Model`
 trailers in the commit message itself; no separate session record was
 published with it.
+
+2026-11-16: Codex CLI 0.169.0 (`gpt-6.1-sol`) implements optional documentation and native delivery fixes. [Record](docs/ai/2026-11-16-0.6.28.md).

@@ -1781,3 +1781,23 @@ transaction, missing/corrupt retained record or foreign identity refuses.
 No home settings change. The durable record write is idempotent and covered
 at each fault event; later delivery is checked after recovery. This is source
 verification only. Bootstrap selection and native installation remain separate.
+
+## Optional host documentation (0.14.0)
+
+Format-2 recipes and BUNDLE records accept `optional-doc info`, `optional-doc
+tldr` and `optional-doc archwiki`. The identifiers map only to placed data under
+`usr/share/doc/info`, `usr/share/doc/tldr` and `usr/share/doc/arch-wiki`.
+Executable modes are refused. Recipes may declare `documentation <path>` to a
+hash-pinned native archive list; the packaging commit supplies the importer.
+`build --native-archives DIR` selects the read-only archive cache. No live host
+documentation is harvested. Corpus tldr is installed with the explicit target.
+
+`install --docs info,tldr,archwiki` or `--docs none` selects groups per host.
+Omitted selection on an upgrade retains existing choices; initial installs use
+all declared groups. `docs set LIST` prepares a selection change using the kept
+immutable payload; ordinary apply/settings activation finishes it. The product
+hash stays unchanged; transaction masks bind the independent host selection.
+Cancellation leaves the old selection; applying interruptions finish forward.
+Checking still hashes every retained payload, including omitted groups.
+Native-owned groups with matching content are borrowed and their provider/version
+is recorded; they are never taken over or removed by a selection change.

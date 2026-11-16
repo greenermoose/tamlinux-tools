@@ -670,6 +670,23 @@ static int packaging_files(build_t *b, const char *tree) {
     return 0;
 }
 
+/* The trusted packaging commit owns the importer and hash-pinned source
+ * list. The archive cache is input only; no live documentation is harvested. */
+static int packaging_documentation(build_t *b,const char *tree) {
+    if(!b->r.documentation)return 0;
+    size_t n=0;
+    char *code=tb_git_file(b->packaging,b->packaging_commit,"tools/stage-documentation.py",&n);
+    char *sources=tb_git_file(b->packaging,b->packaging_commit,b->r.documentation,&n);
+    if(!code || !sources){free(code);free(sources);return -1;}
+    const char *argv[]={"/usr/bin/python3","-I","-c",code,"--destination",tree,"--sources-json",sources,
+        "--native-archives",b->o->native_archives?b->o->native_archives:"/var/cache/pacman/pkg",NULL};
+    tam_exec_result_t result=tam_exec(argv,300000);
+    int failed=result.exit_code || result.timed_out || result.truncated;
+    if(failed)tb_err("documentation import failed: %s",result.stderr_buf?result.stderr_buf:"");
+    tam_exec_result_free(&result);
+    free(code);free(sources);return failed?-1:0;
+}
+
 /* Split the merged DESTDIR's /usr after all components have finished.
  * The new names are entirely within the unpublished output directory. */
 static int split_product(build_t *b,const char *partial) {
@@ -866,7 +883,7 @@ int tb_build(const tb_build_opts_t *o) {
         goto out;
     }
     if ((b.r.format==2?split_product(&b,partial):merge(&b,partial))!=0)goto out;
-    if (packaging_files(&b, partial) != 0) goto out;
+    if (packaging_files(&b, partial) != 0 || packaging_documentation(&b,partial)) goto out;
     if(b.r.format==2) {
         char *placed=tam_path_join(partial,"placed");
         int r=placed?tam_fs_walk(placed,TAM_WALK_ONE_DEVICE,check_placed,&b):-1; free(placed);
@@ -897,7 +914,7 @@ int tb_build(const tb_build_opts_t *o) {
         if (ok) sources[b.n] = source_text[b.n];
     }
     tb_seal_t so = {
-        .format=b.r.format,.buildenv=b.buildenv,
+        .format=b.r.format,.buildenv=b.buildenv,.docs=b.r.docs,
         .targets=(const char *const *)b.r.targets,.ntargets=b.r.ntargets,
         .name = b.r.name, .version = o->version, .host = o->host ? o->host : b.r.host, .built = o->built,
         .sources = sources, .nsources = nsources,
