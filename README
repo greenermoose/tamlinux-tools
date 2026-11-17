@@ -131,7 +131,7 @@ tam-file-select, 0.5.0 or later for tam-bundle. tam-file-select uses the
 portal library via pkg-config libtam-portal (adds libtam and D-Bus). Install
 libtam first; if its prefix is outside pkg-config's default path:
 
-    export PKG_CONFIG_PATH="$HOME/.local/dev/lib/pkgconfig"
+    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig"
 
     make
     make test
@@ -139,7 +139,7 @@ libtam first; if its prefix is outside pkg-config's default path:
 
 Development install for your user (make uninstall with the same PREFIX):
 
-    make install PREFIX=$HOME/.local/dev
+    make install PREFIX=$HOME/.local
 
 Or name the libtam prefix without pkg-config:
 
