@@ -2,7 +2,7 @@
 
 - **Date:** 2026-11-09
 - **Stage:** Develop: the first slice of `tam-bundle`, per the approved
-  [design](../plans/tam-bundle.md).
+  [design](../../docs/plans/tam-bundle.md).
 - **CLI Tool:** Claude Code 2.1.321
 - **Model:** Claude Opus 5.5 (`claude-opus-5-5`)
 - **Transcript:** Retained privately by the author.

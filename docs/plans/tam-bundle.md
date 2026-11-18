@@ -52,7 +52,7 @@ The first delivery bridge and its explicit remaining gates are recorded in
 Its real-C-engine fixtures and unactivated Home Manager build do not prove
 physical login, native replacement, power loss or Nix recovery acceptance.
 No native package or candidate stage has moved. The tool record is
-[here](../ai/2026-11-11-bundle-migration.md).
+[here](../../work/history/2026-11-11-bundle-migration.md).
 
 ## Console activation integration
 
@@ -290,7 +290,7 @@ and randomized kills. Product and settings recovery suites retain their
 mandatory private PID namespace and private `/proc`, without a host
 fallback. `make test` passed all 25 product, 21 settings, 10 runtime and
 two new build proof tests, plus the existing compatibility and manual
-checks. The [session record](../ai/2026-11-10-tam-bundle-07-audit.md#08-tool-checkpoint)
+checks. The [session record](../../work/history/2026-11-10-tam-bundle-07-audit.md#08-tool-checkpoint)
 gives the exact run results.
 
 These are automated tool proofs. Native package updates are trusted

@@ -15,7 +15,7 @@
 > Yes, go ahead with pkg-config and the clear error
 
 The full discussion is quoted in the `tam` repository's record of the same
-session, `docs/ai/2026-10-19-tam-libtam-pkg-config.md`.
+session, `work/history/2026-10-19-tam-libtam-pkg-config.md`.
 
 ## Key decisions
 

@@ -1,0 +1,47 @@
+W1 THE WORK FOLDER AND WHATNOW
+
+Date: 2026-11-17
+AI harness: Claude Code 2.1.326
+AI model: claude-opus-5-5
+Commits: the commit that adds this record
+
+
+GUIDANCE
+
+  Fred: "Let update our procedure for the work folder. Keep a file
+  called WHATNOW. When agents record a work session, have them review
+  and revise that file to describe what has just been done and what
+  should be done next. This will be the handoff spot. Each work record
+  should have a brief handoff section, but the WHATNOW should explain in
+  more detail and be the first place a new session looks to decide what
+  to do when working on a repo. Make sure this work folder and new
+  WHATNOW file standard is in place for all of these repos" (libtam,
+  tam, tam-clam, tam-data, tam-edit, tam-last, tam-pane, tamlinux,
+  tamlinux-tools).
+
+  Fred's answer on the old records: "Move under work/".
+
+
+DONE
+
+  - docs/ai/ moved to work/history/ with git mv. Links to it were
+    rewritten in AI_PROVENANCE.md and docs/plans/tam-bundle.md, and
+    the moved records' links to docs/plans/ now go up two levels. The
+    dated docs prune inventory keeps its old paths, as history. A link
+    check before and after finds no new broken links.
+  - work/README-work, work/WHATNOW and this record added.
+  - AI_PROVENANCE.md now describes work/; its earlier record follows
+    under "Before 2026-11-17".
+  - No code changed; no tool version changed.
+
+
+FAILED
+
+  - The first relink also rewrote the prose path ../libtam in a moved
+    record. Caught in the diff, reverted, and the script fixed to
+    rewrite only paths that exist under docs/.
+
+
+HANDOFF
+
+  - No tools work is queued; work/WHATNOW lists the known items.

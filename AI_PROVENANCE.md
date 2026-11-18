@@ -1,18 +1,38 @@
-# AI Collaboration & Provenance
+# AI collaboration and provenance
 
-2026-11-15: Codex CLI `0.169.0` (`gpt-6.1-sol`) preserves completed transaction history when preparation is refused and adds ownership/runtime regression coverage. [Record](docs/ai/2026-11-15-refused-prepare.md).
+This repository follows the [Tamlinux AI provenance standard](https://github.com/greenermoose/tamlinux/blob/main/docs/ai-provenance-standard.md).
+Work is handed from session to session in `work/`, as
+`work/README-work` describes:
 
-2026-11-14: Antigravity CLI (`agy`) `1.5.9` — Accept `SUDO_UID` in `tam-bundle` `prepare_uid` and fix CWD-relative `/tmp` temp cleanup via `tb_remove_path`. [Record](docs/ai/2026-11-14-tam-bundle-sudo-uid-and-tmp-cleanup.md).
+- `work/WHATNOW` says what was just done and what comes next, in detail.
+  A new session reads it first.
+- Each work session has one plain-text record, `work/W<number>-<name>`.
+  It names the AI harness and model with the version checked at the
+  time, quotes the prompts that steered the work, lists its commits, and
+  says what failed.
+- Commits made with AI help carry `Co-authored-by:`, `AI-Tool:` and
+  `AI-Model:` trailers.
+- Transcripts are kept privately by the author.
 
-2026-11-13: Codex CLI `0.169.0` (`gpt-6.1-sol`) converts tracked README files to plain text and updates their consumers. [Record](docs/ai/2026-11-13-plain-readmes.md).
+## Before 2026-11-17
 
-2026-11-13: Antigravity CLI (`agy`) `1.5.8` — Verify overlapping `toggles/` vs `toggles/hypr/` `SETTINGS` precedence and run the full `tamlinux-tools` suite. [Record](docs/ai/2026-11-13-toggles-overlap-test.md).
+Until 2026-11-17 this repository kept its session records in `docs/ai/`.
+They are now in `work/history/`, unchanged apart from links rewritten to
+their new paths. The record of that period follows as it was.
 
-2026-11-12: Codex CLI `0.167.2` (`gpt-6.1-sol`) — Restore readiness after canceled updates. [Record](docs/ai/2026-11-12-settings-cancellation.md).
+2026-11-15: Codex CLI `0.169.0` (`gpt-6.1-sol`) preserves completed transaction history when preparation is refused and adds ownership/runtime regression coverage. [Record](work/history/2026-11-15-refused-prepare.md).
 
-2026-11-11: Codex CLI `0.167.1` (`gpt-6.1-sol`) implements dormant-slot archival, exact product detachment and settings preparation recovery. [Record](docs/ai/2026-11-11-bundle-migration.md).
+2026-11-14: Antigravity CLI (`agy`) `1.5.9` — Accept `SUDO_UID` in `tam-bundle` `prepare_uid` and fix CWD-relative `/tmp` temp cleanup via `tb_remove_path`. [Record](work/history/2026-11-14-tam-bundle-sudo-uid-and-tmp-cleanup.md).
 
-2026-11-11: Codex CLI `0.167.1` (`gpt-6.1-sol`) — daily plain text journal. [Record](docs/ai/2026-11-11-plain-text-journal.md).
+2026-11-13: Codex CLI `0.169.0` (`gpt-6.1-sol`) converts tracked README files to plain text and updates their consumers. [Record](work/history/2026-11-13-plain-readmes.md).
+
+2026-11-13: Antigravity CLI (`agy`) `1.5.8` — Verify overlapping `toggles/` vs `toggles/hypr/` `SETTINGS` precedence and run the full `tamlinux-tools` suite. [Record](work/history/2026-11-13-toggles-overlap-test.md).
+
+2026-11-12: Codex CLI `0.167.2` (`gpt-6.1-sol`) — Restore readiness after canceled updates. [Record](work/history/2026-11-12-settings-cancellation.md).
+
+2026-11-11: Codex CLI `0.167.1` (`gpt-6.1-sol`) implements dormant-slot archival, exact product detachment and settings preparation recovery. [Record](work/history/2026-11-11-bundle-migration.md).
+
+2026-11-11: Codex CLI `0.167.1` (`gpt-6.1-sol`) — daily plain text journal. [Record](work/history/2026-11-11-plain-text-journal.md).
 
 Fred directs this project. AI-assisted work records the tool and verified
 version, model, guiding prompts, authorship boundaries and verification.
@@ -22,36 +42,36 @@ no transcript identifiers or store paths.
 AI-assisted commits carry `Co-authored-by`, `AI-Tool` and `AI-Model` trailers.
 Human-only commits retain their original authorship.
 
-## How to read this record
+### How to read this record
 
 This repository follows the Tamlinux
 [AI provenance standard](https://github.com/greenermoose/tamlinux/blob/main/docs/ai-provenance-standard.md).
-Each session record in [`docs/ai/`](docs/ai/) gives the date, tool version,
+Each session record in [`work/history/`](work/history/) gives the date, tool version,
 model, Fred's guiding prompts verbatim, the commits, and the decisions.
 
 | Date | Work | Tool and model | Evidence |
 | --- | --- | --- | --- |
-| 2026-11-10 | Approved 0.7 formats and recovery audit; verified 0.8 native/runtime and offline build tool | Codex 0.167.0; `gpt-6.1-sol` | [Session record](docs/ai/2026-11-10-tam-bundle-07-audit.md) |
-| 2026-11-10 | Approved 0.6 formats and recovery; tested 0.7 private settings draft | Codex 0.167.0; `gpt-6.1-sol` | [Session record](docs/ai/2026-11-10-tam-bundle-06-completion.md) |
-| 2026-11-10 | Recovered format-2 draft; correct process selection and isolate signal tests after a compositor termination | Codex 0.167.0; `gpt-6.1-sol` | [Session record](docs/ai/2026-11-10-tam-bundle-format2-safety.md) |
-| 2026-11-09 | `tam-bundle` 0.5.0–0.5.2: recipe targets, pinned files and native bring-up | Codex 0.167.0; `gpt-6.1-sol` | [Session record](docs/ai/2026-11-09-tam-bundle-recipes.md) |
-| 2026-10-09 | Public repository publication and README `libtam` link fix | opencode 1.18.35; `big-pickle` | [Session record](docs/ai/2026-10-09-publish-repository.md) |
-| 2026-10-19 | Find `libtam` with pkg-config; clear error when missing | Claude Code 2.1.304; `claude-opus-5-5` | [Session record](docs/ai/2026-10-19-libtam-pkg-config.md) |
-| 2026-10-22 | Link `libtam` and its new portal library, `libtam-portal`, statically | Claude Code 2.1.307; `claude-opus-5-5` | [Session record](docs/ai/2026-10-22-libtam-portal-static.md) |
-| 2026-11-04 | Clarify repository purpose in README (no ROADMAP) | Cursor 3.27.22; `composer` | [Session record](docs/ai/2026-11-04-clarify-readme-purpose.md) |
-| 2026-11-09 | Field survey for `tam-bundle`; add `UPSTREAM.md` and `upstream/` | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-field-survey.md) |
-| 2026-11-09 | Design for `tam-bundle` | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-design.md) |
-| 2026-11-10 | Revised `tam-bundle` design: standard placement, prepare and apply, settings capture | Claude Code 2.1.322; `claude-opus-5-5` | [Session record](docs/ai/2026-11-10-tam-bundle-redesign.md) |
-| 2026-11-09 | `tam-bundle` 0.1.0: formats, switch, rollback, recovery and their tests | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-core.md) |
-| 2026-11-09 | `tam-bundle` 0.2.0: `build` and `lock` | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-build-lock.md) |
-| 2026-11-09 | `tam-bundle` 0.3.0 and 0.3.1: privilege through `pkexec` | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-pkexec.md) |
-| 2026-11-09 | `tam-bundle` 0.4.0: the manual index, built into the bundle | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-man-index.md) |
-| 2026-11-09 | `tam-bundle`: the manual page | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-man-page.md) |
-| 2026-11-09 | `tam-bundle` 0.4.1: every changing command recovers first | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](docs/ai/2026-11-09-tam-bundle-recover-first.md) |
+| 2026-11-10 | Approved 0.7 formats and recovery audit; verified 0.8 native/runtime and offline build tool | Codex 0.167.0; `gpt-6.1-sol` | [Session record](work/history/2026-11-10-tam-bundle-07-audit.md) |
+| 2026-11-10 | Approved 0.6 formats and recovery; tested 0.7 private settings draft | Codex 0.167.0; `gpt-6.1-sol` | [Session record](work/history/2026-11-10-tam-bundle-06-completion.md) |
+| 2026-11-10 | Recovered format-2 draft; correct process selection and isolate signal tests after a compositor termination | Codex 0.167.0; `gpt-6.1-sol` | [Session record](work/history/2026-11-10-tam-bundle-format2-safety.md) |
+| 2026-11-09 | `tam-bundle` 0.5.0–0.5.2: recipe targets, pinned files and native bring-up | Codex 0.167.0; `gpt-6.1-sol` | [Session record](work/history/2026-11-09-tam-bundle-recipes.md) |
+| 2026-10-09 | Public repository publication and README `libtam` link fix | opencode 1.18.35; `big-pickle` | [Session record](work/history/2026-10-09-publish-repository.md) |
+| 2026-10-19 | Find `libtam` with pkg-config; clear error when missing | Claude Code 2.1.304; `claude-opus-5-5` | [Session record](work/history/2026-10-19-libtam-pkg-config.md) |
+| 2026-10-22 | Link `libtam` and its new portal library, `libtam-portal`, statically | Claude Code 2.1.307; `claude-opus-5-5` | [Session record](work/history/2026-10-22-libtam-portal-static.md) |
+| 2026-11-04 | Clarify repository purpose in README (no ROADMAP) | Cursor 3.27.22; `composer` | [Session record](work/history/2026-11-04-clarify-readme-purpose.md) |
+| 2026-11-09 | Field survey for `tam-bundle`; add `UPSTREAM.md` and `upstream/` | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](work/history/2026-11-09-tam-bundle-field-survey.md) |
+| 2026-11-09 | Design for `tam-bundle` | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](work/history/2026-11-09-tam-bundle-design.md) |
+| 2026-11-10 | Revised `tam-bundle` design: standard placement, prepare and apply, settings capture | Claude Code 2.1.322; `claude-opus-5-5` | [Session record](work/history/2026-11-10-tam-bundle-redesign.md) |
+| 2026-11-09 | `tam-bundle` 0.1.0: formats, switch, rollback, recovery and their tests | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](work/history/2026-11-09-tam-bundle-core.md) |
+| 2026-11-09 | `tam-bundle` 0.2.0: `build` and `lock` | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](work/history/2026-11-09-tam-bundle-build-lock.md) |
+| 2026-11-09 | `tam-bundle` 0.3.0 and 0.3.1: privilege through `pkexec` | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](work/history/2026-11-09-tam-bundle-pkexec.md) |
+| 2026-11-09 | `tam-bundle` 0.4.0: the manual index, built into the bundle | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](work/history/2026-11-09-tam-bundle-man-index.md) |
+| 2026-11-09 | `tam-bundle`: the manual page | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](work/history/2026-11-09-tam-bundle-man-page.md) |
+| 2026-11-09 | `tam-bundle` 0.4.1: every changing command recovers first | Claude Code 2.1.321; `claude-opus-5-5` | [Session record](work/history/2026-11-09-tam-bundle-recover-first.md) |
 
 The initial commit `18ef5de` predates this record. It was authored in an
 Antigravity session and carries that session's `AI-Tool` and `AI-Model`
 trailers in the commit message itself; no separate session record was
 published with it.
 
-2026-11-16: Codex CLI 0.169.0 (`gpt-6.1-sol`) implements optional documentation and native delivery fixes. [Record](docs/ai/2026-11-16-0.6.28.md).
+2026-11-16: Codex CLI 0.169.0 (`gpt-6.1-sol`) implements optional documentation and native delivery fixes. [Record](work/history/2026-11-16-0.6.28.md).

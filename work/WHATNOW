@@ -1,0 +1,59 @@
+WHATNOW
+
+What tamlinux-tools is doing now and what comes next. Read this first;
+revise it at the end of every session (work/README-work).
+
+Updated: 2026-11-17, with W1
+
+
+STATE
+
+  Standalone Tamlinux utilities in C on libtam, each with its own
+  version. Branch develop, pushed.
+
+  - tam-bundle 0.14.0 (src/tam-bundle/, TB_VERSION in tb.h): installs a
+    Tamlinux assembly as a bundle with prepare and apply, format-2
+    transactions, settings capture, dormant-slot migration and
+    detachment, and, newest, optional host documentation with its own
+    transactional selection (docs/plans/tam-bundle.md, "Optional host
+    documentation (0.14.0)"). It is source-tested against libtam 0.7.1;
+    package integration and physical acceptance are separate stages.
+  - tam-journal 0.1.0 (src/tam-journal.c): daily plain-text journal
+    files (docs/plans/plain-text-journal.md).
+  - tam-file-select (src/tam-file-select.c): file chooser through the
+    desktop portal (libtam-portal).
+
+  The history of every change is in work/history/; the newest is the
+  0.6.28 work (2026-11-16).
+
+
+NEXT
+
+  No tools work is queued here. Work in this repository comes from
+  Tamlinux candidates (tamlinux and tamlinux-packages), on Fred's word.
+  Known items, for when he asks:
+
+  1. tam-bundle's open questions (docs/plans/tam-bundle.md, "Open"):
+     the polkit rule for org.tamlinux.bundle.apply on a text console;
+     whether tam-desktop stops the graphical session target on exit; a
+     login-time switch without logind; the first contents of the
+     settings list; the Void rootstock profile.
+
+  2. Delivery of tam-bundle 0.14.0 through tamlinux-packages, then its
+     package Test, Run and Release, which move only on Fred's words.
+
+
+WAITING FOR FRED
+
+  - Which Tamlinux candidate carries the next tools change.
+
+
+WATCH OUT
+
+  - Tools reach the workstation only through a recorded
+    tamlinux-packages assembly, never from this checkout.
+  - Every code change bumps that tool's version in the same commit.
+  - make test runs the bundle, busy and journal suites; the bundle
+    suites use private namespaces and temporary roots and never touch
+    the installed system.
+  - Development installs use PREFIX=$HOME/.local, never /usr/local.

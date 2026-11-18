@@ -80,7 +80,7 @@ installation, candidate stage move, release or Nix retirement occurred.
 ## Continuation
 
 Review the concrete formats at the start of
-[`docs/plans/tam-bundle.md`](../plans/tam-bundle.md#07-development-checkpoint).
+[`docs/plans/tam-bundle.md`](../../docs/plans/tam-bundle.md#07-development-checkpoint).
 The developer confirmed readiness and the exact design file was displayed
 in Micro, then approved its 0.7 formats and directed continuation through
 0.8, then recipes/tam nut, candidate integration and real-machine migration
@@ -147,7 +147,7 @@ Quickshell Wayland probe reads the module's declared `typeinfo` filename
 and tests the exported version. Tar metadata is normalized so two builds
 at the same recorded time can produce the same archive bytes.
 
-The [workstation recipe proof](../plans/tam-bundle.md#format-2-workstation-recipe-checkpoint)
+The [workstation recipe proof](../../docs/plans/tam-bundle.md#format-2-workstation-recipe-checkpoint)
 names the exact packaging commit, output identity and archive SHA-256.
 A verified-cache build and a clean-cache build sealed the same manifest
 and metadata. Both archives compared byte for byte and the archive
@@ -176,7 +176,7 @@ eight events and twelve random kills, alongside the earlier seven-event
 format-1 coverage. Both suites retain mandatory private PID/private-proc
 isolation.
 
-The [development checkpoint](../plans/tam-bundle.md#arch-tam-nut-development-checkpoint)
+The [development checkpoint](../../docs/plans/tam-bundle.md#arch-tam-nut-development-checkpoint)
 records the exact native archive hash, verifier results and remaining
 source and hardware gates. No native package was installed.
 

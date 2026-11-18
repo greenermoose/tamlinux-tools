@@ -30,7 +30,7 @@
   It now links to the public `libtam` repository by its full URL, so the
   cross-repository reference works on GitHub and in any other renderer.
 - The repository had no AI provenance files, so this session added
-  `AI_PROVENANCE.md`, this record, and the `docs/ai/` index. The session ID
+  `AI_PROVENANCE.md`, this record, and the `work/history/` index. The session ID
   for this record lives only in the private ledger.
 
 ## Verification

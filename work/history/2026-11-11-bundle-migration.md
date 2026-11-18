@@ -2,7 +2,7 @@
 
 The uninstalled 0.12.0 tool verifies and archives a dormant format-1 slot,
 retains exact rollback copies during detachment for Nix return, and repairs
-settings preparation retries. The [design checkpoint](../plans/tam-bundle.md#012-migration-source-checkpoint)
+settings preparation retries. The [design checkpoint](../../docs/plans/tam-bundle.md#012-migration-source-checkpoint)
 records the concrete transaction extension and remaining migration gates.
 
 - **Date**: 2026-11-11

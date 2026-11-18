@@ -1,0 +1,151 @@
+WORK SESSIONS
+
+This folder is where tamlinux-tools's work is handed from one session to the
+next. It holds:
+
+  WHATNOW        what was just done and what to do next, in detail.
+                 Read it first. Every session revises it.
+  W<n>-<name>    one record per work session: what was asked, what got
+                 done, what failed.
+  history/       the session records kept in docs/ai/ until
+                 2026-11-17, unchanged and read-only.
+
+An AI agent starting work in this repository should be able to read
+WHATNOW and carry on without asking Fred to repeat himself.
+
+
+WHY WORK/ AND NOT DOCS/AI
+
+Tamlinux repositories kept session records in docs/ai/ until 2026-11-17.
+Those records kept useful things (Fred's prompts, commits, test results
+and the reasons behind choices) but also turned into paperwork: index
+files, tables and boilerplate fields edited every session, and commits
+made only to write a record's own hash into it. They had no place for
+failures, and the next steps were scattered across many records.
+
+work/ keeps the useful parts, drops the paperwork, records what failed,
+and puts the next steps in one file, WHATNOW. Nothing indexes the
+records, and each record goes in a commit with the work.
+
+The earlier records moved from docs/ai/ to history/ unchanged, apart
+from links rewritten to their new paths. They are read-only.
+
+THE PROCEDURE
+
+At the start of a session:
+
+  1. Read this file, then WHATNOW. WHATNOW's NEXT section is the to-do
+     list, in order.
+  2. Read the newest record only when WHATNOW points to it or you need
+     its detail:
+
+         ls work | grep '^W' | sort -V | tail -1
+
+At the end of a session:
+
+  1. Write one record, W<n>-<name>, with the next number.
+  2. Revise WHATNOW as a whole: update STATE, take finished items out of
+     NEXT, add what this session found, and keep WAITING FOR FRED and
+     WATCH OUT true. It describes the repository as it is now, not the
+     history of how it got there.
+  3. Commit both with the work (or with the session's last commit). If
+     the session goes on after that, update the same record and WHATNOW
+     instead of starting another record.
+
+
+WHATNOW
+
+Plain text, lines no longer than 76 characters, section names in
+capitals:
+
+    WHATNOW
+
+    What tamlinux-tools is doing now and what comes next. Read this first;
+    revise it at the end of every session (work/README-work).
+
+    Updated: 2026-11-17, with W4
+
+    STATE
+
+      Version, branch, what works, what was just done (with W numbers).
+
+    NEXT
+
+      1. The next piece of work: what, where in the code, how to test
+         it, and when it is done. Enough to start without asking.
+      2. ...
+
+    WAITING FOR FRED
+
+      Builds for him to try, decisions and open points. "Nothing." if
+      nothing.
+
+    WATCH OUT
+
+      Traps, rules and conventions that bite in this repository.
+
+Keep it short enough to read in two minutes: details belong in plans/,
+arch/ and the records, with WHATNOW pointing to them.
+
+
+NAMING
+
+Name each record W<number>-<name>, with no extension and no date: for
+example W3-variables. The number gives the order. The date goes inside
+the record, because git sets every file's date to when it was checked
+out.
+
+
+RECORD FORMAT
+
+Plain text, no Markdown, lines no longer than 76 characters. One value
+per header line. Section names in capitals.
+
+    W3 VARIABLES AND PARAMETER EXPANSION
+
+    Date: 2026-11-17
+    AI harness: Claude Code 2.1.326
+    AI model: claude-opus-5-5
+    Commits: 1a2b3c4, 5d6e7f8
+    Continues: W2  (only when this session picked up W2's work)
+
+    GUIDANCE
+
+      Fred: "Add variables next."
+
+    DONE
+
+      - What changed and how it was checked, one item per change.
+
+    FAILED
+
+      - What was tried and did not work, and why. "Nothing." if nothing.
+
+    HANDOFF
+
+      - Two to five lines: the headline of what is next. WHATNOW has the
+        detail.
+
+Rules:
+
+  - Take the harness version from the running tool (claude --version,
+    codex --version), never from memory.
+  - Commits lists the work's commits. A record never contains the hash
+    of the commit that adds it, and no commit is made just to add a hash.
+  - Continues names the record whose work this session picked up. Leave
+    it out otherwise.
+  - Quote Fred's prompts that steered the work, word for word. Leave out
+    side remarks.
+  - Write only what the next agent needs and cannot get from the diff.
+    15 to 40 lines is typical.
+
+
+PRIVACY
+
+This repository is public. Records and WHATNOW never contain session
+IDs, transcript or store paths, home-directory paths, private repository
+names or private decision numbers. Transcripts are kept privately by the
+author; one private line per record maps it to its transcript.
+
+Commits made with AI help still carry Co-authored-by, AI-Tool (with the
+version) and AI-Model trailers.
