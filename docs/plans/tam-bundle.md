@@ -743,10 +743,13 @@ keeps those, including everything a capture leaves out).
   install: its identity, file list, dependency list and files.
 - **Settings capture:** one user's Tamlinux settings at one moment, with
   their host marks. Only files in the home directory; nothing from `/etc`.
-- **Tam nut:** the smallest piece of Tamlinux, one native package installed
-  on a rootstock, holding `tam-nut` and `tam-bundle` (see "Installing
-  Tamlinux").
-- **Rootstock profile:** the part of the tam nut that says how this
+- **Bud (currently `tam-nut`):** the smallest piece of Tamlinux, one native
+  package installed on a rootstock, holding `tam-nut` and `tam-bundle` (see
+  "Installing Tamlinux"; scheduled to be renamed `tam-bud` in 1.0.0).
+- **Scion:** the Tamlinux software that installs on a rootstock (referred to
+  as "cultivar" in older sections below; "cultivar" now means each major +
+  minor version of Tamlinux).
+- **Rootstock profile:** the part of the bud (`tam-nut`) that says how this
   rootstock works: which package manager answers ownership questions, which
   folders files may be placed in, which of them affect login and boot,
   which post-install steps exist, and how to stop and restart a version's
