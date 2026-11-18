@@ -569,8 +569,17 @@ class ProductTransactions(unittest.TestCase):
             baseline=self.base/('baseline-'+phase);shutil.copytree(self.root,baseline,symlinks=True)
             trace=self.base/(phase+'.trace')
             self.tb(phase,digest,env={'TAM_BUNDLE_TRACE':str(trace)})
-            count=len(trace.read_text().splitlines())
+            transitions=[line.split(maxsplit=1)[1] for line in trace.read_text().splitlines()]
+            count=len(transitions)
             self.assertGreater(count,5)
+            if phase=='detach':
+                first_unlink=transitions.index('detach-placed-unlink')
+                current_unlink=transitions.index('detach-current-unlink')
+                removals=transitions[first_unlink:current_unlink]
+                self.assertGreater(removals.count('detach-placed-unlink'),1)
+                self.assertEqual(removals[-1],'v2-filesystem-sync')
+                self.assertEqual(removals.count('v2-filesystem-sync'),1)
+                self.assertNotIn('v2-directory-sync',removals)
             for point in range(1,count+1):
                 with self.subTest(phase=phase,point=point):
                     shutil.rmtree(self.root);shutil.copytree(baseline,self.root,symlinks=True)

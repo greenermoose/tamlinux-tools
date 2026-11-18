@@ -1,0 +1,33 @@
+W2 BATCH BUNDLE DETACH SYNCS
+
+Date: 2026-11-18
+AI harness: Codex CLI 0.170.0
+AI model: gpt-6.2-sol
+Commits: This commit.
+
+GUIDANCE
+
+  Fred: "Make that change for future detaches."
+  Fred: "You need to be much more thoughtful about how you approach
+  things. You're doing things the hard and slowest possible way when
+  you need to be looking for efficiencies and speed."
+
+DONE
+
+  - A detached bundle's placed paths share the slot mount. Flush the
+    removal batch once before clearing current. The transaction stays
+    in applying until those changes are durable.
+  - All 34 format-2 tests passed. The detach crash test checked the
+    sync order and retried at each of 27 interruption points.
+
+FAILED
+
+  The first test run hit LeakSanitizer's ptrace restriction in the
+  sandbox. Reran in the suite's private PID namespace outside it.
+
+HANDOFF
+
+  Estimate wall time and disk work before preparing a reset on a slow
+  device. Reuse detach's placed-file validation in console wrappers.
+  Check progress with one bounded read-only pass. Measure elapsed time
+  on comparable hardware when 0.14.1 reaches a package trial.

@@ -913,10 +913,13 @@ static int detach_apply(context *c) {
         if(fd<0) {free(leaf); if(errno==ENOENT)continue; goto done;}
         int r=unlinkat(fd,leaf,e->type=='d'?AT_REMOVEDIR:0),error=errno;
         free(leaf);
-        if(r && error!=ENOENT && !(e->type=='d' && error==ENOTEMPTY)) {close(fd); goto done;}
         if(!r)tb_fault("detach-placed-unlink");
-        r=syncdir(fd); close(fd); if(r)goto done;
+        close(fd);
+        if(r && error!=ENOENT && !(e->type=='d' && error==ENOTEMPTY))goto done;
     }
+    /* mountcheck puts every placed path on the slot's mount. Persist the
+       entire removal batch before committing the change to current. */
+    if(syncall(c->slot))goto done;
     if(strcmp(cur,"-")) {
         if(unlinkat(c->slot,"current",0))goto done;
         tb_fault("detach-current-unlink");

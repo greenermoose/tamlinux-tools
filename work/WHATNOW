@@ -3,21 +3,23 @@ WHATNOW
 What tamlinux-tools is doing now and what comes next. Read this first;
 revise it at the end of every session (work/README-work).
 
-Updated: 2026-11-17, with W1
+Updated: 2026-11-18, with W2
 
 
 STATE
 
   Standalone Tamlinux utilities in C on libtam, each with its own
-  version. Branch develop, pushed.
+  version. Branch develop.
 
-  - tam-bundle 0.14.0 (src/tam-bundle/, TB_VERSION in tb.h): installs a
+  - tam-bundle 0.14.1 (src/tam-bundle/, TB_VERSION in tb.h): installs a
     Tamlinux assembly as a bundle with prepare and apply, format-2
     transactions, settings capture, dormant-slot migration and
     detachment, and, newest, optional host documentation with its own
     transactional selection (docs/plans/tam-bundle.md, "Optional host
     documentation (0.14.0)"). It is source-tested against libtam 0.7.1;
     package integration and physical acceptance are separate stages.
+    Detach now flushes the removal batch once before clearing current
+    (W2). Console wrappers can rely on its internal placed-file check.
   - tam-journal 0.1.0 (src/tam-journal.c): daily plain-text journal
     files (docs/plans/plain-text-journal.md).
   - tam-file-select (src/tam-file-select.c): file chooser through the
@@ -39,7 +41,7 @@ NEXT
      login-time switch without logind; the first contents of the
      settings list; the Void rootstock profile.
 
-  2. Delivery of tam-bundle 0.14.0 through tamlinux-packages, then its
+  2. Delivery of tam-bundle 0.14.1 through tamlinux-packages, then its
      package Test, Run and Release, which move only on Fred's words.
 
 
