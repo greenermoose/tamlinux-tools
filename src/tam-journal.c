@@ -146,8 +146,8 @@ int main(int argc, char **argv) {
             memcpy(day, argv[++i], sizeof day); have_date = 1;
         } else { usage(stderr); return 2; }
     }
-    if (tam_bundle_guard(NULL)) {
-        fputs("tam-journal: Tamlinux is switching versions; finish recovery first.\n", stderr); return 1;
+    if (tam_install_pending(NULL)) {
+        fputs("tam-journal: Tamlinux has an interrupted update pending; finish recovery first.\n", stderr); return 1;
     }
     umask(077);
     const char *configured = getenv("TAM_JOURNAL_DIR"), *home = getenv("HOME");

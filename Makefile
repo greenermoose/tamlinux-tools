@@ -14,43 +14,40 @@ DBUS_LIBS   := $(shell $(PKG_CONFIG) --libs dbus-1 2>/dev/null)
 ifdef LIBTAM_PREFIX
 LIBTAM_CFLAGS := -I$(LIBTAM_PREFIX)/include $(DBUS_CFLAGS)
 LIBTAM_LIBS   := -L$(LIBTAM_PREFIX)/lib -ltam-portal -ltam $(DBUS_LIBS)
-LIBTAM_ERROR  := $(if $(and $(wildcard $(LIBTAM_PREFIX)/include/tam_portal.h),$(shell grep -s -l tam_bundle_guard $(LIBTAM_PREFIX)/include/tam.h)),,LIBTAM_PREFIX=$(LIBTAM_PREFIX) has no include/tam_portal.h (libtam 0.6.0 or later))
+LIBTAM_ERROR  := $(if $(and $(wildcard $(LIBTAM_PREFIX)/include/tam_portal.h),$(shell grep -s -l tam_install_pending $(LIBTAM_PREFIX)/include/tam.h)),,LIBTAM_PREFIX=$(LIBTAM_PREFIX) has no include/tam_portal.h and libtam 0.8.0 or later)
 else
-LIBTAM_FOUND  := $(shell $(PKG_CONFIG) --atleast-version=0.6.0 libtam-portal 2>/dev/null && echo yes)
+LIBTAM_FOUND  := $(shell $(PKG_CONFIG) --atleast-version=0.8.0 libtam-portal 2>/dev/null && echo yes)
 LIBTAM_CFLAGS := $(if $(LIBTAM_FOUND),$(shell $(PKG_CONFIG) --cflags libtam-portal))
 LIBTAM_LIBS   := $(if $(LIBTAM_FOUND),$(shell $(PKG_CONFIG) --libs libtam-portal))
-LIBTAM_ERROR  := $(if $(LIBTAM_FOUND),,$(PKG_CONFIG) cannot find libtam-portal (libtam 0.6.0 or later))
+LIBTAM_ERROR  := $(if $(LIBTAM_FOUND),,$(PKG_CONFIG) cannot find libtam-portal (libtam 0.8.0 or later))
 endif
 
 INCLUDES = $(LIBTAM_CFLAGS)
 LIBS = $(LIBTAM_LIBS)
 
-# tam-bundle needs only the libtam core, 0.6.0 or later (SHA-256, the tree
-# walk, record files and tree operations).
+# tam-journal needs only the libtam core, 0.8.0 or later.
 ifdef LIBTAM_PREFIX
 CORE_CFLAGS := -I$(LIBTAM_PREFIX)/include
 CORE_LIBS   := -L$(LIBTAM_PREFIX)/lib -ltam
-CORE_ERROR  := $(if $(shell grep -s -l tam_bundle_guard $(LIBTAM_PREFIX)/include/tam.h),,LIBTAM_PREFIX=$(LIBTAM_PREFIX) has no libtam 0.6.0 or later include/tam.h)
+CORE_ERROR  := $(if $(shell grep -s -l tam_install_pending $(LIBTAM_PREFIX)/include/tam.h),,LIBTAM_PREFIX=$(LIBTAM_PREFIX) has no libtam 0.8.0 or later include/tam.h)
 else
-CORE_FOUND  := $(shell $(PKG_CONFIG) --atleast-version=0.6.0 libtam 2>/dev/null && echo yes)
+CORE_FOUND  := $(shell $(PKG_CONFIG) --atleast-version=0.8.0 libtam 2>/dev/null && echo yes)
 CORE_CFLAGS := $(if $(CORE_FOUND),$(shell $(PKG_CONFIG) --cflags libtam))
 CORE_LIBS   := $(if $(CORE_FOUND),$(shell $(PKG_CONFIG) --libs libtam))
-CORE_ERROR  := $(if $(CORE_FOUND),,$(PKG_CONFIG) cannot find libtam 0.6.0 or later)
+CORE_ERROR  := $(if $(CORE_FOUND),,$(PKG_CONFIG) cannot find libtam 0.8.0 or later)
 endif
 
-BUNDLE_SRCS := $(wildcard src/tam-bundle/*.c)
-BUNDLE_HDRS := $(wildcard src/tam-bundle/*.h)
 LIBTAM_DIR := $(if $(LIBTAM_PREFIX),$(LIBTAM_PREFIX)/lib,$(shell $(PKG_CONFIG) --variable=libdir libtam 2>/dev/null))
 CORE_ARCHIVE := $(wildcard $(LIBTAM_DIR)/libtam.a)
 PORTAL_ARCHIVE := $(wildcard $(LIBTAM_DIR)/libtam-portal.a)
 
-BIN = bin/tam-file-select bin/tam-bundle bin/tam-journal
+BIN = bin/tam-file-select bin/tam-journal
 
 # libtam is linked statically, so the binary carries the libtam it was built
 # with. The stamp changes with that configuration and forces a rebuild.
 CONFIG := $(CC) $(CFLAGS) $(INCLUDES) $(LIBS) $(CORE_CFLAGS) $(CORE_LIBS)
 
-.PHONY: all clean test install install-file-select install-bundle install-journal test-journal uninstall libtam-check core-check FORCE
+.PHONY: all clean test install install-file-select install-journal test-journal uninstall libtam-check core-check FORCE
 
 all: bin $(BIN)
 
@@ -63,17 +60,6 @@ bin/.config: FORCE | bin
 bin/tam-file-select: src/tam-file-select.c bin/.config $(CORE_ARCHIVE) $(PORTAL_ARCHIVE) | bin libtam-check
 	$(CC) $(CFLAGS) $(INCLUDES) $< $(LIBS) -o $@
 
-bin/tam-bundle: $(BUNDLE_SRCS) $(BUNDLE_HDRS) bin/.config $(CORE_ARCHIVE) | bin core-check
-	$(CC) $(CFLAGS) -static $(CORE_CFLAGS) $(BUNDLE_SRCS) $(CORE_LIBS) -o $@
-
-# The test build acts on fault points ($$TAM_BUNDLE_FAULT) and skips
-# post-install steps; it is never installed.
-bin/tam-bundle-test: $(BUNDLE_SRCS) $(BUNDLE_HDRS) bin/.config $(CORE_ARCHIVE) | bin core-check
-	$(CC) $(CFLAGS) -DTAM_BUNDLE_TESTING -fsanitize=address,undefined $(CORE_CFLAGS) $(BUNDLE_SRCS) $(CORE_LIBS) -o $@
-
-bin/tam-bundle-busy-test: tests/tam-bundle/busy.c src/tam-bundle/busy.c src/tam-bundle/util.c $(BUNDLE_HDRS) bin/.config $(CORE_ARCHIVE) | bin core-check
-	$(CC) $(CFLAGS) -fsanitize=address,undefined $(CORE_CFLAGS) -Isrc/tam-bundle tests/tam-bundle/busy.c src/tam-bundle/busy.c src/tam-bundle/util.c $(CORE_LIBS) -o $@
-
 bin/tam-journal: src/tam-journal.c bin/.config $(CORE_ARCHIVE) | bin core-check
 	$(CC) $(CFLAGS) -std=c11 -g $(CORE_CFLAGS) $< $(CORE_LIBS) -o $@
 
@@ -82,8 +68,8 @@ test-journal: bin/tam-journal
 
 core-check:
 ifneq ($(CORE_ERROR),)
-	@printf '%s\n' 'tamlinux-tools: cannot build tam-bundle: $(CORE_ERROR).' \
-		'  Install libtam 0.6.0 or later first:   make -C <libtam checkout> install PREFIX=<prefix>' \
+	@printf '%s\n' 'tamlinux-tools: cannot build tam-journal: $(CORE_ERROR).' \
+		'  Install libtam 0.8.0 or later first:   make -C <libtam checkout> install PREFIX=<prefix>' \
 		'  then let pkg-config see it:   export PKG_CONFIG_PATH=<prefix>/lib/pkgconfig' >&2
 	@exit 1
 endif
@@ -92,55 +78,26 @@ endif
 libtam-check:
 ifneq ($(LIBTAM_ERROR),)
 	@printf '%s\n' 'tamlinux-tools: cannot build: $(LIBTAM_ERROR).' \
-		'  Install libtam 0.6.0 or later first:   make -C <libtam checkout> install PREFIX=<prefix>' \
+		'  Install libtam 0.8.0 or later first:   make -C <libtam checkout> install PREFIX=<prefix>' \
 		'  then let pkg-config see it:   export PKG_CONFIG_PATH=<prefix>/lib/pkgconfig' \
 		'  or name the prefix:   make LIBTAM_PREFIX=<prefix>' >&2
 	@exit 1
 endif
 
-# tests/tam-bundle works in $$TAM_TEST_DIR (default $$TMPDIR, else /tmp); run
-# it on Btrfs and ext4 directories to cover both file systems.
-test: all bin/tam-bundle-test bin/tam-bundle-busy-test test-journal
+test: all test-journal
 	@tests/run_tests.sh
-	@tests/tam-bundle/run.sh
-	@tests/tam-bundle/build.sh
-	@python3 -B tests/tam-bundle/build_environment.py
-	@python3 -B tests/tam-bundle/build_faults.py
-	@python3 -B tests/tam-bundle/format2_build.py
-	@python3 -B tests/tam-bundle/namespace.py
-	@python3 -B tests/tam-bundle/format2.py
-	@python3 -B tests/tam-bundle/documentation.py
-	@python3 -B tests/tam-bundle/settings.py
-	@python3 -B tests/tam-bundle/runtime.py
 	@tests/man.sh
-	@if command -v xmllint >/dev/null; then \
-		sed 's|@BINDIR@|/usr/bin|g' data/org.tamlinux.bundle.policy.in | xmllint --noout - \
-		&& echo "  [PASS] the polkit action file is well-formed"; \
-	else echo "  [SKIP] xmllint is not installed; polkit action file not checked"; fi
 
 clean:
 	rm -rf bin
 
-# The polkit action names tam-bundle by its installed path. polkit reads
-# actions only from /usr/share/polkit-1/actions, so a development install
-# under another prefix carries an inert copy and pkexec asks for an
-# administrator through its general action instead.
-POLICY = share/polkit-1/actions/org.tamlinux.bundle.policy
 MANDIR ?= $(PREFIX)/share/man
 
-install: install-file-select install-bundle install-journal
+install: install-file-select install-journal
 
 install-file-select: bin/tam-file-select
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m 755 bin/tam-file-select $(DESTDIR)$(PREFIX)/bin/
-
-# Native adapters install the rollback tool outside the product bundle.
-install-bundle: bin/tam-bundle
-	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/share/polkit-1/actions $(DESTDIR)$(MANDIR)/man1
-	install -m 755 bin/tam-bundle $(DESTDIR)$(PREFIX)/bin/
-	install -m 644 man/tam-bundle.1 $(DESTDIR)$(MANDIR)/man1/
-	sed 's|@BINDIR@|$(PREFIX)/bin|g' data/org.tamlinux.bundle.policy.in > $(DESTDIR)$(PREFIX)/$(POLICY)
-	chmod 644 $(DESTDIR)$(PREFIX)/$(POLICY)
 
 install-journal: bin/tam-journal
 	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(MANDIR)/man1
@@ -148,6 +105,5 @@ install-journal: bin/tam-journal
 	install -m 644 man/tam-journal.1 $(DESTDIR)$(MANDIR)/man1/
 
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/bin/tam-file-select $(DESTDIR)$(PREFIX)/bin/tam-bundle $(DESTDIR)$(PREFIX)/bin/tam-journal
-	rm -f $(DESTDIR)$(PREFIX)/$(POLICY)
-	rm -f $(DESTDIR)$(MANDIR)/man1/tam-bundle.1 $(DESTDIR)$(MANDIR)/man1/tam-journal.1
+	rm -f $(DESTDIR)$(PREFIX)/bin/tam-file-select $(DESTDIR)$(PREFIX)/bin/tam-journal
+	rm -f $(DESTDIR)$(MANDIR)/man1/tam-journal.1

@@ -46,16 +46,13 @@ TOOLS
   Description: File chooser via the desktop XDG Portal
   Dependencies: Static libtam-portal / libtam; shared libdbus-1 at runtime
 
-  Command: tam-bundle
-  Description: Installs a named, versioned set of real files into a slot,
-  records it, and switches between versions with rollback (design
-  <docs/plans/tam-bundle.md>). In development; not yet delivered by any
-  assembly.
-  Dependencies: Static libtam 0.5.0 or later; libc only. build and lock run
-  git, and build runs tar and make; pkexec (polkit) for a root-owned slot
+  Command: tam-journal
+  Description: Plain-text daily journal in Micro
+  Dependencies: Static libtam 0.8.0 or later
 
-Assemblies install tam-file-select on PATH. Product flows that call it include
-share (tam-menu-share) and theme branding image pick.
+Source installs place tam-file-select and tam-journal on PATH. Product flows
+that call tam-file-select include share (tam-menu-share) and theme branding
+image pick.
 
 
 DAILY TEXT JOURNAL
@@ -80,56 +77,11 @@ Prints selected path(s), one per line. Exit 0 on pick, 1 if nothing was
 picked, 2 if the chooser failed to open.
 
 
-USAGE: tam-bundle
-
-    tam-bundle seal <dir> --name N --version V [--source "COMPONENT COMMIT"]... [--after STEP]...
-    tam-bundle verify <dir>
-    tam-bundle [--slot DIR] switch <bundle dir>
-    tam-bundle [--slot DIR] back [<bundle id>]
-    tam-bundle [--slot DIR] status | check | where <path> | recover | prune [--yes]
-    tam-bundle lock <component> <commit> [--lock FILE] [--url URL] [--repos DIR]
-    tam-bundle [--slot DIR] build <recipes dir> <lock file> -o <dir> --version V [--repos DIR]
-
-lock sets one component's exact commit in a lock file (default tamlinux.lock);
-a short revision is resolved only in a local clone named with --repos. build
-exports each locked commit with git archive, runs make and make install for
-it, caches finished components under $XDG_CACHE_HOME/tamlinux/tam-bundle/, and
-seals the merged result for the slot's live tree. Each make runs in its own
-user and mount namespace at fixed paths under /tmp/tam-bundle, so the same
-lock gives the same bundle whatever the cache's path; this needs unprivileged
-user namespaces. --repos DIR takes sources from local clones in DIR before
-fetching from a lock file's URL. With index man in the recipes' bundle file,
-build also runs man-db's mandb on the bundle's share/man, so the manual index
-(share/man/index.db) is sealed with the pages and needs man-db at build time.
-
-On a slot that belongs to root (the default), switch, back, recover, keep,
-unkeep and prune run again as root through pkexec, then run the session steps
-(such as restarting the desktop shell) as you. Where no polkit agent runs, as
-on a text console, run the command with sudo and then tam-bundle after as
-yourself. make install also installs the polkit action,
-share/polkit-1/actions/org.tamlinux.bundle.policy.
-
-tam-bundle --help lists every command and option, and the manual page
-<man/tam-bundle.1>, which make install installs, describes them with the
-files, formats and exit codes. The default slot is /usr/lib/tamlinux; any
-directory works as a slot, so tests and private tools use slots of their own.
-Exit 0 on success, 1 when refused or a check finds problems, 2 on usage
-errors, 3 when a switch completed but a post-install step failed, and 4 when
-an interrupted switch needs tam-bundle recover.
-
-make test builds bin/tam-bundle-test, which honours test fault points, and
-runs tests/tam-bundle/run.sh and tests/tam-bundle/build.sh (which needs git
-and make) in $TAM_TEST_DIR (default $TMPDIR), then tests/man.sh, which formats
-the manual page with groff and checks that it names every command and option
-in --help. Run it on Btrfs and on ext4 directories to cover both file systems.
-
-
 BUILDING AND INSTALLATION
 
-Links statically against an installed libtam: 0.4.0 or later for
-tam-file-select, 0.5.0 or later for tam-bundle. tam-file-select uses the
-portal library via pkg-config libtam-portal (adds libtam and D-Bus). Install
-libtam first; if its prefix is outside pkg-config's default path:
+Links statically against an installed libtam 0.8.0 or later. tam-file-select
+uses the portal library via pkg-config libtam-portal (adds libtam and D-Bus).
+Install libtam first; if its prefix is outside pkg-config's default path:
 
     export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig"
 
