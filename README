@@ -6,6 +6,8 @@ its own component version, delivered through tamlinux-packages
 <https://github.com/greenermoose/tamlinux-packages> assemblies, and usable
 from scripts without the Tamlinux desktop shell.
 
+Follows the tam-idol 0.2.0 standard.
+
 
 WHAT BELONGS HERE
 
@@ -101,8 +103,30 @@ Portability notes for musl or other distributions belong with libtam; this
 repo does not claim measured cold-start times or verified musl builds.
 
 
+WHERE THINGS ARE
+
+  src/             C sources for tam-file-select and tam-journal
+  man/             manual pages (tam-journal.1)
+  tests/           automated tests run by make test
+  arch/            architecture notes
+  bugs/            defect records (B1, B2, ...)
+  ideas/           ideas from other projects
+  plans/           work phase plans (P1, P2, ...)
+  reviews/         code and design reviews (R1, R2, ...)
+  work/            WHATNOW (read it first), W records, and history/
+  docs/            pre-standard design notes (plain-text-journal.md)
+  upstream/        historical field survey notes
+  Makefile         build, test, install and uninstall targets
+  VERSION          suite version
+  ROADMAP.md       current tools and queued work
+  UPSTREAM.md      code ancestry and idea sources
+  AI-BLAME.md      how AI work is recorded here
+  COPYRIGHT        copyright and license notices
+  LICENSE          GNU General Public License, version 3
+
+
 LICENSE
 
 GNU General Public License v3.0 (GPLv3). See <LICENSE>.
 
-Software defect tracker <bugs/README-bugs.md>.
+Software defect tracker <bugs/README-bugs>.

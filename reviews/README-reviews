@@ -1,0 +1,64 @@
+REVIEWS
+
+This folder holds reviews of this repository's project: one file per
+review. A review is a hard look at the code, a plan or a design by
+someone other than its author, a person or an AI. It records what was
+looked at, what was found, and what became of each finding.
+
+A review is evidence to check, not permission to deploy or proof that a
+fix has landed.
+
+
+NAMING
+
+  R<n>-<short-name>.md, for example R1-cursor-movement.md. Numbers
+  count up from R1 and are never reused. The date goes inside the
+  record.
+
+
+RECORD TEMPLATE
+
+  Copy this into a new file:
+
+    # R<n>: <what was reviewed>
+
+    - **Date:** YYYY-MM-DD
+    - **Reviewer:** a person, or the AI harness and model, with versions
+    - **Revision:** the exact commit examined
+    - **Scope:** the files, plan or feature looked at, and what was not
+
+    ## Summary
+
+    Two to five lines: the state of what was reviewed and the findings
+    that matter most.
+
+    ## Findings
+
+    ### 1. <title> (<severity>)
+
+    - **Where:** file:line, or the plan section
+    - **What:** what is wrong, and its effect
+    - **Evidence:** how to see it: a reproducer, a test or the lines
+      that show it
+    - **Fix:** the change the reviewer recommends
+    - **Status:** open, became B<n>, fixed in <commit>, or rejected
+      with the reason
+
+    ## Limits
+
+    What the review did not check, and why.
+
+  Severity uses the scale in bugs/README-bugs. A finding that is
+  confirmed becomes a bug record, and the finding's status names it.
+  Update the status lines as findings are fixed; leave the rest of the
+  review as it was written, so it stays a record of what was seen at
+  that revision.
+
+  Keep personal data, credentials and machine-specific logs out of
+  these records.
+
+
+IN THIS REPOSITORY
+
+  Index: no reviews recorded yet. Add one line per review: its file name
+  and what it reviewed.

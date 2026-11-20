@@ -1,0 +1,40 @@
+W4 TAM-IDOL 0.2.0 STANDARD
+
+Date: 2026-11-20
+AI harness: agy 1.5.13
+AI model: Gemini 4 Neon (Medium)
+Commits: the commit that adds this record
+
+
+GUIDANCE
+
+  Fred: "/plan Take the next work slice for tam-idol, if there is one."
+  Fred: "Approved. Proceed."
+
+
+DONE
+
+  - Added VERSION (0.1.0), ROADMAP.md, and expanded COPYRIGHT to the
+    standard format.
+  - Renamed AI_PROVENANCE.md to AI-BLAME.md and reworded its header,
+    preserving the pre-2026-11-17 historical ledger verbatim.
+  - Updated README with the tam-idol 0.2.0 standard line, WHERE THINGS
+    ARE, and the updated bugs/README-bugs link.
+  - Added standard README-<folder> files in arch/, bugs/, ideas/,
+    plans/, and reviews/; removed legacy bugs/README-bugs.md and
+    bugs/_template.md; updated work/README-work with the 0.2.0 text and
+    IN THIS REPOSITORY section.
+  - Revised work/WHATNOW to reflect tam-idol 0.2.0 compliance and the
+    earlier retirement of tam-bundle.
+  - Verified with tam-idol's tools/idol-check and make test.
+
+
+FAILED
+
+  - Nothing.
+
+
+HANDOFF
+
+  - No tools work is queued. Work in this repository enters from
+    Tamlinux candidates on Fred's word.

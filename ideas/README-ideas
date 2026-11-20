@@ -1,0 +1,56 @@
+IDEAS
+
+This folder keeps the ideas we find in other projects: what they do
+well that this repository's project should learn from, and what they do
+badly that it should avoid.
+
+
+ONE FILE PER PROJECT
+
+  <name>.md, for example hyprland.md or bash.md. Each file has:
+
+    What it is           language, license, size, scope
+    Ideas worth taking   each with a verdict and a reason
+    Things to avoid      each with a reason
+    Where to look        files or docs to read when we act on an idea
+
+  Verdicts:
+
+    adopt     we want this; it has (or will get) a place in a plan
+    consider  promising; needs a closer look or Fred's view
+    reject    we decided against it, and the reason says why
+
+  An idea that the project builds gets the plan or version that
+  delivered it, for example "adopt (P1, 0.0.4)". When code is taken, not
+  just the idea, it is also recorded in UPSTREAM.md and COPYRIGHT.
+
+  A synthesis.md, where there is one, gathers the best ideas from every
+  file by topic, and is the place to start.
+
+
+REFERENCE CLONES
+
+  sources lists the projects we keep a local clone of, so we can read
+  their code and follow their fixes. tools/pull-references brings every
+  listed clone up to date and clones any that are missing:
+
+    tools/pull-references          pull every listed clone
+    tools/pull-references --list   show what is listed and where
+
+  The clones live outside this repository (under ~/Code). Nothing is
+  ever pushed or posted to those projects.
+
+
+HOW DEEP THESE NOTES GO
+
+  Notes say whether they come from reading the project's source or are
+  starter notes from its known design. Starter notes are checked against
+  the source before we act on them. A full "survey the field" happens
+  only when Fred asks for one.
+
+
+IN THIS REPOSITORY
+
+  No files here yet. A historical field survey for the retired
+  tam-bundle remains in:
+    upstream/2026-11-09-file-bundles-and-atomic-switch.md

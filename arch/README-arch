@@ -1,0 +1,35 @@
+ARCHITECTURE
+
+This folder documents the system architecture of this repository's
+project: the modules and how they connect, the data structures, the
+algorithms, the dependencies, and the evaluations of other projects that
+shaped them.
+
+
+WHAT GOES HERE
+
+  principles.md        the design rules every change follows
+  data-structures.md   the main structures, as they are built today
+  dependencies.md      every library the project uses, why, and which
+                       version removes it
+  <name>-evaluation.md how another project works; what to take from it
+                       and what not to repeat
+
+  A project without code yet starts with principles.md. Later phases add
+  their own files; each plan says which.
+
+
+KEEPING IT TRUE
+
+  These documents describe the code as it is. A change that alters a
+  structure, an algorithm or a dependency updates the matching file in
+  the same commit. Where code and document disagree, the code is right
+  and the document is a bug.
+
+
+IN THIS REPOSITORY
+
+  Each tool is a small standalone C program under src/ linked statically
+  against libtam (and libtam-portal plus shared libdbus-1 for
+  tam-file-select). No separate architecture documents exist here yet;
+  the design for tam-journal is in docs/plans/plain-text-journal.md.

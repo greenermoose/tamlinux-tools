@@ -1,0 +1,88 @@
+BUGS
+
+This folder tracks the defects of this repository's project: one file
+per bug.
+
+
+NAMING
+
+  B<n>-<short-name>.md, for example B1-focus-lost-after-unmap.md.
+  Numbers count up from B1 and are never reused, even for a bug that is
+  closed as a duplicate. Check the index below and the Git history
+  before taking a number.
+
+
+STATUS
+
+  Reported      someone saw it; not yet reproduced
+  Confirmed     reproduced, with steps written down
+  In progress   someone is working on the fix
+  Fix available the fix is in the source, but not yet checked in a build
+                Fred runs
+  Verified      the fix is checked in the build that ships it
+  Deferred      real, but put off; say why and until when
+  Closed        verified, or rejected or duplicate, with the reason
+
+  Reopen a bug, under its own number, when the behaviour comes back.
+
+
+SEVERITY
+
+  Describes impact, not confidence or schedule.
+
+  critical  crashes the program or session, loses work or data, or locks
+            the user out
+  high      breaks a core feature with no workaround
+  medium    a feature misbehaves but a workaround exists
+  low       cosmetic or rare
+
+  IN THIS REPOSITORY, below, names the core features.
+
+
+RECORD TEMPLATE
+
+  Copy this into a new file:
+
+    # B<n>: <title>
+
+    - **Status:** Reported
+    - **Severity:** medium
+    - **Affected versions:** 0.0.1
+    - **Fixed in:**
+    - **Reported:** YYYY-MM-DD, by whom
+    - **Found by:** R<n>, when a review found it
+
+    ## What happens
+
+    ## What should happen
+
+    ## Steps to reproduce
+
+    ## Cause
+
+    ## Fix and verification
+
+    Link the fixing commit, the regression test, and the exact build in
+    which the fix was checked.
+
+  Keep personal data, credentials and machine-specific logs out of these
+  records. Describe a reproducer instead, and cite the system journal by
+  boot and time window.
+
+
+BUGS IN OTHER PROJECTS
+
+  A bug found and fixed in a project we learn from (see ideas/) can
+  teach us about our own code. Note it in that project's ideas file,
+  with a link, and open a B record here only if our code has the same
+  bug.
+
+
+IN THIS REPOSITORY
+
+  Core features: tam-file-select (desktop portal file chooser) and
+  tam-journal (daily plain-text journal in Micro, with locking and
+  atomic saves).
+
+  Index: no bugs recorded yet. Add one line per bug: its file name and
+  title. Read the record for its status; the index does not repeat it.

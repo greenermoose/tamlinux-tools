@@ -1,1 +1,20 @@
-The portions of Tamlinux written by a human are Copyright (C) 2026 by Fred Horch
+tamlinux-tools copyright and license notices
+
+The portions of tamlinux-tools written by a human are Copyright (C) 2026
+Fred Horch.
+
+tamlinux-tools is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option)
+any later version. See LICENSE for the full text.
+
+tamlinux-tools is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+or FITNESS FOR A PARTICULAR PURPOSE.
+
+
+CODE TAKEN FROM OTHER PROJECTS
+
+None. When a repository takes code from another project, UPSTREAM.md
+lists each piece, its source file and commit, and how it was changed,
+and this section carries that project's copyright notice and license.

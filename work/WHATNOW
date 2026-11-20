@@ -3,46 +3,29 @@ WHATNOW
 What tamlinux-tools is doing now and what comes next. Read this first;
 revise it at the end of every session (work/README-work).
 
-Updated: 2026-11-20, with W3
+Updated: 2026-11-20, with W4
 
 
 STATE
 
-  Standalone Tamlinux utilities in C on libtam, each with its own
-  version. Branch dev (renamed from develop under D272 on 2026-11-20).
+  Version 0.1.0 on branch dev. Follows the tam-idol 0.2.0 standard (W4).
+  Standalone Tamlinux utilities in C linked statically against libtam
+  0.8.0 or later.
 
-  - tam-bundle 0.14.1 (src/tam-bundle/, TB_VERSION in tb.h): installs a
-    Tamlinux assembly as a bundle with prepare and apply, format-2
-    transactions, settings capture, dormant-slot migration and
-    detachment, and, newest, optional host documentation with its own
-    transactional selection (docs/plans/tam-bundle.md, "Optional host
-    documentation (0.14.0)"). It is source-tested against libtam 0.7.1;
-    package integration and physical acceptance are separate stages.
-    Detach now flushes the removal batch once before clearing current
-    (W2). Console wrappers can rely on its internal placed-file check.
-  - tam-journal 0.1.0 (src/tam-journal.c): daily plain-text journal
-    files (docs/plans/plain-text-journal.md).
+  - tam-journal 0.1.0 (src/tam-journal.c): daily plain-text journal in
+    Micro (docs/plans/plain-text-journal.md).
   - tam-file-select (src/tam-file-select.c): file chooser through the
     desktop portal (libtam-portal).
 
-  The history of every change is in work/history/; the newest is the
-  0.6.28 work (2026-11-16).
+  tam-bundle has been retired; both remaining tools use
+  tam_install_pending() from libtam 0.8.0. Pre-2026-11-17 session
+  records live in work/history/.
 
 
 NEXT
 
   No tools work is queued here. Work in this repository comes from
-  Tamlinux candidates (tamlinux and tamlinux-packages), on Fred's word.
-  Known items, for when he asks:
-
-  1. tam-bundle's open questions (docs/plans/tam-bundle.md, "Open"):
-     the polkit rule for org.tamlinux.bundle.apply on a text console;
-     whether tam-desktop stops the graphical session target on exit; a
-     login-time switch without logind; the first contents of the
-     settings list; the Void rootstock profile.
-
-  2. Delivery of tam-bundle 0.14.1 through tamlinux-packages, then its
-     package Test, Run and Release, which move only on Fred's words.
+  Tamlinux candidates on Fred's word.
 
 
 WAITING FOR FRED
@@ -52,10 +35,8 @@ WAITING FOR FRED
 
 WATCH OUT
 
-  - Tools reach the workstation only through a recorded
-    tamlinux-packages assembly, never from this checkout.
-  - Every code change bumps that tool's version in the same commit.
-  - make test runs the bundle, busy and journal suites; the bundle
-    suites use private namespaces and temporary roots and never touch
-    the installed system.
+  - Every code change bumps VERSION (and the affected tool's version,
+    where it has one) in the same commit.
+  - make test runs tests/journal/test_journal.py, tests/run_tests.sh,
+    and tests/man.sh.
   - Development installs use PREFIX=$HOME/.local, never /usr/local.

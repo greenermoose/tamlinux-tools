@@ -1,0 +1,46 @@
+PLANS
+
+This folder holds one plan per work phase of this repository's project.
+A phase covers a range of versions; ROADMAP.md lists the milestones and
+their version numbers, and each plan says how to reach them.
+
+
+NAMING
+
+  P<n>-<name>.md, numbered in the order the phases run, for example
+  P1-foundation.md for 0.0.x. IN THIS REPOSITORY, below, lists the
+  plans with their version ranges.
+
+  Numbers are never reused. A new phase gets the next number, even when
+  it runs between two existing ones; its version range says where it
+  fits.
+
+
+WHAT A PLAN HOLDS
+
+  Status        not started, in progress, or done, with the current
+                version
+  Goal          what the phase achieves, in a sentence or two
+  Versions      each version in the phase with its work items
+  Acceptance    the checks that say a version is done
+  Dependencies  what the phase adds or removes (keep
+                arch/dependencies.md in step)
+  Risks         what could go wrong, and what we do about it
+  Open points   questions for Fred, which stay open until he decides
+
+
+KEEPING PLANS CURRENT
+
+  - Update the status line when work starts and when a version lands.
+  - When the work shows a plan was wrong, change the plan in the same
+    commit as the code, and say why in the commit message.
+  - Fred's decisions are written into the plan as decisions, with their
+    date. Until then, a remark from Fred is context, not a decision.
+  - Bugs found while working on a phase go in bugs/, linked from the
+    plan.
+
+
+IN THIS REPOSITORY
+
+  No P-numbered plans yet. The design note for tam-journal lives at
+  docs/plans/plain-text-journal.md.

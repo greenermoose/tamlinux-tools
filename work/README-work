@@ -1,14 +1,12 @@
 WORK SESSIONS
 
-This folder is where tamlinux-tools's work is handed from one session to the
-next. It holds:
+This folder is where this repository's work is handed from one session
+to the next. It holds:
 
   WHATNOW        what was just done and what to do next, in detail.
                  Read it first. Every session revises it.
   W<n>-<name>    one record per work session: what was asked, what got
                  done, what failed.
-  history/       the session records kept in docs/ai/ until
-                 2026-11-17, unchanged and read-only.
 
 An AI agent starting work in this repository should be able to read
 WHATNOW and carry on without asking Fred to repeat himself.
@@ -27,8 +25,10 @@ work/ keeps the useful parts, drops the paperwork, records what failed,
 and puts the next steps in one file, WHATNOW. Nothing indexes the
 records, and each record goes in a commit with the work.
 
-The earlier records moved from docs/ai/ to history/ unchanged, apart
-from links rewritten to their new paths. They are read-only.
+D278 ended the old arrangement on 2026-11-20. No live repository has a
+docs/ai/ folder. Records written before the 2026-11-17 cutover live in
+work/history/ unchanged apart from repaired links; they are read-only
+and are not indexed. New sessions use work/W<n>-<name> as below.
 
 THE PROCEDURE
 
@@ -60,7 +60,7 @@ capitals:
 
     WHATNOW
 
-    What tamlinux-tools is doing now and what comes next. Read this first;
+    What <project> is doing now and what comes next. Read this first;
     revise it at the end of every session (work/README-work).
 
     Updated: 2026-11-17, with W4
@@ -149,3 +149,8 @@ author; one private line per record maps it to its transcript.
 
 Commits made with AI help still carry Co-authored-by, AI-Tool (with the
 version) and AI-Model trailers.
+
+
+IN THIS REPOSITORY
+
+  history/ holds the pre-2026-11-17 session records moved from docs/ai/.
