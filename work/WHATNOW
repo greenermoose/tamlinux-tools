@@ -3,13 +3,13 @@ WHATNOW
 What tamlinux-tools is doing now and what comes next. Read this first;
 revise it at the end of every session (work/README-work).
 
-Updated: 2026-11-18, with W2
+Updated: 2026-11-20, with W3
 
 
 STATE
 
   Standalone Tamlinux utilities in C on libtam, each with its own
-  version. Branch develop.
+  version. Branch dev (renamed from develop under D272 on 2026-11-20).
 
   - tam-bundle 0.14.1 (src/tam-bundle/, TB_VERSION in tb.h): installs a
     Tamlinux assembly as a bundle with prepare and apply, format-2

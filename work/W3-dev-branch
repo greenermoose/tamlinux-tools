@@ -1,0 +1,33 @@
+W3 DEV BRANCH
+
+Date: 2026-11-20
+AI harness: opencode 2.2.5
+AI model: big-pickle
+Commits: the branch-rename commit
+
+
+GUIDANCE
+
+  Fred: "Plan approved. Proceed"
+
+  D272 renames the working branch from develop to dev in every Tamlinux
+  repository.
+
+
+DONE
+
+  - Renamed develop to dev locally and on GitHub; origin/dev holds the
+    same commit. No tool version or source pin changed.
+  - work/WHATNOW records the new branch name. No other live file in this
+    repository named the branch.
+
+
+FAILED
+
+  - Nothing.
+
+
+HANDOFF
+
+  - No tools work is queued. work/WHATNOW lists the known items.
+  - The repository-by-repository rename continues elsewhere.
